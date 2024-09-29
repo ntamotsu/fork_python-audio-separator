@@ -245,21 +245,44 @@ class MDXCSeparator(CommonSeparator):
                 result = torch.zeros(req_shape, dtype=torch.float32).to(device)
                 counter = torch.zeros(req_shape, dtype=torch.float32).to(device)
 
+                parts = []
+                indices = []
+                lengths = []
+
                 for i in tqdm(range(0, mix.shape[1], step)):
                     part = mix[:, i : i + chunk_size]
                     length = part.shape[-1]
                     if i + chunk_size > mix.shape[1]:
                         part = mix[:, -chunk_size:]
                         length = chunk_size
-                    part = part.to(device)
-                    x = self.model_run(part.unsqueeze(0))[0]
-                    if i + chunk_size > mix.shape[1]:
-                        # Corrigido para adicionar corretamente ao final do tensor
-                        result = self.overlap_add(result, x, window, result.shape[-1] - chunk_size, length)
-                        counter[..., result.shape[-1] - chunk_size :] += window[:length]
-                    else:
-                        result = self.overlap_add(result, x, window, i, length)
-                        counter[..., i : i + length] += window[:length]
+                    parts.append(part)
+                    indices.append(i)
+                    lengths.append(length)
+
+                    if len(parts) == self.batch_size:
+                        parts_tensor = torch.stack(parts).to(device)
+                        outputs = self.model_run(parts_tensor)
+                        for output, idx, length in zip(outputs, indices, lengths):
+                            if idx + chunk_size > mix.shape[1]:
+                                result = self.overlap_add(result, output, window, result.shape[-1] - chunk_size, length)
+                                counter[..., result.shape[-1] - chunk_size :] += window[:length]
+                            else:
+                                result = self.overlap_add(result, output, window, idx, length)
+                                counter[..., idx : idx + length] += window[:length]
+                        parts = []
+                        indices = []
+                        lengths = []
+
+                if len(parts) > 0:
+                    parts_tensor = torch.stack(parts).to(device)
+                    outputs = self.model_run(parts_tensor)
+                    for output, idx, length in zip(outputs, indices, lengths):
+                        if idx + chunk_size > mix.shape[1]:
+                            result = self.overlap_add(result, output, window, result.shape[-1] - chunk_size, length)
+                            counter[..., result.shape[-1] - chunk_size :] += window[:length]
+                        else:
+                            result = self.overlap_add(result, output, window, idx, length)
+                            counter[..., idx : idx + length] += window[:length]
 
             inferenced_outputs = result / counter.clamp(min=1e-10)
 
