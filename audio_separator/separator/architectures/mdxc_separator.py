@@ -264,6 +264,7 @@ class MDXCSeparator(CommonSeparator):
                             outputs = self.model_run(parts_tensor)
                             for output, idx, length in zip(outputs, indices, lengths):
                                 if idx + chunk_size > mix.shape[1]:
+                                    # Corrigido para adicionar corretamente ao final do tensor
                                     result = self.overlap_add(result, output, window, result.shape[-1] - chunk_size, length)
                                     counter[..., result.shape[-1] - chunk_size :] += window[:length]
                                 else:
