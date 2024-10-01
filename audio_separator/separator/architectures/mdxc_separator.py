@@ -273,7 +273,7 @@ class MDXCSeparator(CommonSeparator):
 
                     # Process when we reached the end of the mix
                     if len(parts) > 0:
-                        parts_tensor = torch.cat(parts, dim=0).to(device)
+                        parts_tensor = torch.cat(parts, dim=0)
                         outputs = self.model_run(parts_tensor)
                         for output, idx, length in zip(outputs, indices, lengths):
                             is_last_chunk = idx + chunk_size > mix.shape[1]
