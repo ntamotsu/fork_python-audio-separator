@@ -239,29 +239,37 @@ class MDXCSeparator(CommonSeparator):
             # Transfer to the weighting plate for the same device as the other tensors
             window = window.to(device)
 
-            # with torch.cuda.amp.autocast():
-            with torch.no_grad():
-                req_shape = (len(self.model_data_cfgdict.training.instruments),) + tuple(mix.shape)
-                result = torch.zeros(req_shape, dtype=torch.float32).to(device)
-                counter = torch.zeros(req_shape, dtype=torch.float32).to(device)
+            mix_shape = mix.shape[1]
+            pad_size = step - (mix_shape - chunk_size) % step
+            self.logger.debug(f"Pad size: {pad_size}")
 
-                for i in tqdm(range(0, mix.shape[1], step)):
-                    part = mix[:, i : i + chunk_size]
-                    length = part.shape[-1]
-                    if i + chunk_size > mix.shape[1]:
-                        part = mix[:, -chunk_size:]
-                        length = chunk_size
-                    part = part.to(device)
-                    x = self.model_run(part.unsqueeze(0))[0]
-                    if i + chunk_size > mix.shape[1]:
-                        # Corrigido para adicionar corretamente ao final do tensor
-                        result = self.overlap_add(result, x, window, result.shape[-1] - chunk_size, length)
-                        counter[..., result.shape[-1] - chunk_size :] += window[:length]
-                    else:
-                        result = self.overlap_add(result, x, window, i, length)
-                        counter[..., i : i + length] += window[:length]
+            mix = torch.cat([torch.zeros(2, chunk_size - step), mix, torch.zeros(2, pad_size + chunk_size - step)], 1)
+            self.logger.debug(f"Mix shape: {mix.shape}")
+
+            chunks = mix.unfold(1, chunk_size, step).transpose(0, 1)
+            self.logger.debug(f"Chunks length: {len(chunks)} and shape: {chunks.shape}")
+
+            batches = [chunks[i : i + self.batch_size] for i in range(0, len(chunks), self.batch_size)]
+            self.logger.debug(f"Batch size: {self.batch_size}, number of batches: {len(batches)}")
+
+            with torch.cuda.amp.autocast():
+                with torch.no_grad():
+                    req_shape = (len(self.model_data_cfgdict.training.instruments),) + tuple(mix.shape)
+                    result = torch.zeros(req_shape, dtype=torch.float32).to(device)
+                    counter = torch.zeros(req_shape, dtype=torch.float32).to(device)
+
+                    for i, batch in enumerate(tqdm(batches)):
+                        outputs = self.model_run(batch.to(device))
+                        start = i * self.batch_size * step
+                        for j, output in enumerate(outputs):
+                            idx = start + j * step
+                            if idx + chunk_size > mix.shape[1]:
+                                idx = mix.shape[1] - chunk_size
+                            result[..., idx:idx + chunk_size] += output * window
+                            counter[..., idx:idx + chunk_size] += window
 
             inferenced_outputs = result / counter.clamp(min=1e-10)
+            inferenced_outputs = inferenced_outputs[..., chunk_size - step : -(pad_size + chunk_size - step)]
 
         else:
             mix = torch.tensor(mix, dtype=torch.float32)
