@@ -245,47 +245,43 @@ class MDXCSeparator(CommonSeparator):
                     result = torch.zeros(req_shape, dtype=torch.float32).to(device)
                     counter = torch.zeros(req_shape, dtype=torch.float32).to(device)
 
-                    parts = []
-                    indices = []
-                    lengths = []
+                    parts, indices, lengths = [], [], []
 
                     for i in tqdm(range(0, mix.shape[1], step)):
+                        # Prepare the current part of the mix
                         part = mix[:, i : i + chunk_size]
                         length = part.shape[-1]
                         if i + chunk_size > mix.shape[1]:
                             part = mix[:, -chunk_size:]
                             length = chunk_size
+                        part = part.to(device)
                         parts.append(part.unsqueeze(0))
                         indices.append(i)
                         lengths.append(length)
 
+                        # Process when we have a full batch
                         if len(parts) == self.batch_size:
-                            parts_tensor = torch.cat(parts, dim=0).to(device)
+                            parts_tensor = torch.cat(parts, dim=0)
                             outputs = self.model_run(parts_tensor)
                             for output, idx, length in zip(outputs, indices, lengths):
-                                if idx + chunk_size > mix.shape[1]:
-                                    # Corrigido para adicionar corretamente ao final do tensor
-                                    result = self.overlap_add(result, output, window, result.shape[-1] - chunk_size, length)
-                                    counter[..., result.shape[-1] - chunk_size :] += window[:length]
-                                else:
-                                    result = self.overlap_add(result, output, window, idx, length)
-                                    counter[..., idx : idx + length] += window[:length]
-                            parts = []
-                            indices = []
-                            lengths = []
+                                is_last_chunk = idx + chunk_size > mix.shape[1]
+                                overlap_start = result.shape[-1] - chunk_size if is_last_chunk else idx
+                                result = self.overlap_add(result, output, window, overlap_start, length)
+                                counter[..., overlap_start : overlap_start + length] += window[:length]
+                            # Clear lists for the next batch
+                            parts, indices, lengths = [], [], []
 
+                    # Process when we reached the end of the mix
                     if len(parts) > 0:
                         parts_tensor = torch.cat(parts, dim=0).to(device)
                         outputs = self.model_run(parts_tensor)
                         for output, idx, length in zip(outputs, indices, lengths):
-                            if idx + chunk_size > mix.shape[1]:
-                                result = self.overlap_add(result, output, window, result.shape[-1] - chunk_size, length)
-                                counter[..., result.shape[-1] - chunk_size :] += window[:length]
-                            else:
-                                result = self.overlap_add(result, output, window, idx, length)
-                                counter[..., idx : idx + length] += window[:length]
+                            is_last_chunk = idx + chunk_size > mix.shape[1]
+                            overlap_start = result.shape[-1] - chunk_size if is_last_chunk else idx
+                            result = self.overlap_add(result, output, window, overlap_start, length)
+                            counter[..., overlap_start : overlap_start + length] += window[:length]
 
-            inferenced_outputs = result / counter.clamp(min=1e-10)
+                inferenced_outputs = result / counter.clamp(min=1e-10)
 
         else:
             mix = torch.tensor(mix, dtype=torch.float32)
