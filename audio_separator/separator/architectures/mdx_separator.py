@@ -372,7 +372,7 @@ class MDXSeparator(CommonSeparator):
             total_batches = len(mix_waves)
             self.logger.debug(f"Mix part split into batches. Number of batches: {total_batches}")
 
-            with torch.no_grad():
+            with torch.inference_mode():
                 # Processes each batch in the chunk.
                 batches_processed = 0
                 for mix_wave in mix_waves:

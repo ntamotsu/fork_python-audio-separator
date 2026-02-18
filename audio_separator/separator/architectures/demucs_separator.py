@@ -171,7 +171,7 @@ class DemucsSeparator(CommonSeparator):
         mix = (mix - ref.mean()) / ref.std()
         mix_infer = mix
 
-        with torch.no_grad():
+        with torch.inference_mode():
             self.logger.debug("Running model inference...")
             sources = apply_model(
                 model=self.demucs_model_instance,

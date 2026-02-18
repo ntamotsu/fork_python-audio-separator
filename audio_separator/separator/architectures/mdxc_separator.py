@@ -311,7 +311,7 @@ class MDXCSeparator(CommonSeparator):
             window = torch.tensor(signal.windows.hamming(chunk_size), dtype=torch.float32, device=device)
 
 
-            with torch.no_grad():
+            with torch.inference_mode():
                 req_shape = (len(self.model_data_cfgdict.training.instruments),) + tuple(mix.shape)
                 result = torch.zeros(req_shape, dtype=torch.float32, device=device)
                 counter = torch.zeros(req_shape, dtype=torch.float32, device=device)
@@ -392,7 +392,7 @@ class MDXCSeparator(CommonSeparator):
                 else torch.zeros_like(mix)
             )
 
-            with torch.no_grad():
+            with torch.inference_mode():
                 count = 0
                 for batch in tqdm(batches):
                     # Since the model processes the audio data in batches, single_batch_result temporarily holds the model's output

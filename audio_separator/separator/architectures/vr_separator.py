@@ -308,7 +308,7 @@ class VRSeparator(CommonSeparator):
 
             X_dataset = np.asarray(X_dataset)
             self.model_run.eval()
-            with torch.no_grad():
+            with torch.inference_mode():
                 mask = []
 
                 for i in tqdm(range(0, patches, self.batch_size)):

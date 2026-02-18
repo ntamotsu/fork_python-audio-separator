@@ -667,7 +667,7 @@ def dynamic_sparse_attention(query, key, value, sparsity, infer_sparsity=True, a
     n_hashes = 32
     proj_size = 4
     query, key, value = [x.contiguous() for x in [query, key, value]]
-    with torch.no_grad():
+    with torch.inference_mode():
         R = torch.randn(1, query.shape[-1], n_hashes, proj_size // 2, device=query.device)
         bucket_query = _compute_buckets(query, R)
         bucket_key = _compute_buckets(key, R)

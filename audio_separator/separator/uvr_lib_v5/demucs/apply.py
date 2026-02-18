@@ -255,7 +255,7 @@ def apply_model(model, mix, shifts=1, split=True, overlap=0.25, transition_power
             valid_length = length
         mix = tensor_chunk(mix)
         padded_mix = mix.padded(valid_length).to(device)
-        with th.no_grad():
+        with th.inference_mode():
             out = model(padded_mix)
         return center_trim(out, length)
 

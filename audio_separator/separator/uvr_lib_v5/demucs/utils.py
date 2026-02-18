@@ -287,7 +287,7 @@ def apply_model_v1(model, mix, shifts=None, split=False, progress=False, set_pro
         valid_length = model.valid_length(length)
         delta = valid_length - length
         padded = F.pad(mix, (delta // 2, delta - delta // 2))
-        with th.no_grad():
+        with th.inference_mode():
             out = model(padded.unsqueeze(0))[0]
         return center_trim(out, mix)
 
@@ -365,7 +365,7 @@ def apply_model_v2(model, mix, shifts=None, split=False, overlap=0.25, transitio
         valid_length = model.valid_length(length)
         mix = tensor_chunk(mix)
         padded_mix = mix.padded(valid_length)
-        with th.no_grad():
+        with th.inference_mode():
             out = model(padded_mix.unsqueeze(0))[0]
         return center_trim(out, length)
 
