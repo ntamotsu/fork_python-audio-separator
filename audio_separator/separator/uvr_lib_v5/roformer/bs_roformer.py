@@ -14,6 +14,7 @@ from rotary_embedding_torch import RotaryEmbedding
 
 from einops import rearrange, pack, unpack
 from einops.layers.torch import Rearrange
+from ..device_utils import should_fallback_to_cpu_for_complex_ops
 
 # helper functions
 
@@ -429,9 +430,9 @@ class BSRoformer(Module):
         """
 
         original_device = raw_audio.device
-        x_is_mps = True if original_device.type == "mps" else False
+        should_fallback = should_fallback_to_cpu_for_complex_ops(original_device)
 
-        # if x_is_mps:
+        # if should_fallback:
         #     raw_audio = raw_audio.cpu()
 
         device = raw_audio.device
@@ -491,7 +492,7 @@ class BSRoformer(Module):
         mask = torch.stack([fn(x) for fn in self.mask_estimators], dim=1)
         mask = rearrange(mask, "b n t (f c) -> b n f t c", c=2)
 
-        # if x_is_mps:
+        # if should_fallback:
         #     mask = mask.to('cpu')
 
         # modulate frequency representation
@@ -509,7 +510,7 @@ class BSRoformer(Module):
 
         stft_repr = rearrange(stft_repr, "b n (f s) t -> (b n s) f t", s=self.audio_channels)
 
-        recon_audio = torch.istft(stft_repr.cpu() if x_is_mps else stft_repr, **self.stft_kwargs, window=stft_window.cpu() if x_is_mps else stft_window, return_complex=False).to(device)
+        recon_audio = torch.istft(stft_repr.cpu() if should_fallback else stft_repr, **self.stft_kwargs, window=stft_window.cpu() if should_fallback else stft_window, return_complex=False).to(device)
 
         recon_audio = rearrange(recon_audio, "(b n s) t -> b n s t", s=self.audio_channels, n=self.num_stems)
 
@@ -549,12 +550,12 @@ class BSRoformer(Module):
 
         if not return_loss_breakdown:
             # Move the result back to the original device if it was moved to CPU for MPS compatibility
-            # if x_is_mps:
+            # if should_fallback:
             #     total_loss = total_loss.to(original_device)
             return total_loss
 
         # For detailed loss breakdown, ensure all components are moved back to the original device for MPS
-        # if x_is_mps:
+        # if should_fallback:
         #     loss = loss.to(original_device)
         #     multi_stft_resolution_loss = multi_stft_resolution_loss.to(original_device)
         #     weighted_multi_resolution_loss = weighted_multi_resolution_loss.to(original_device)

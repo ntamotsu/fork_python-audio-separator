@@ -15,6 +15,7 @@ from rotary_embedding_torch import RotaryEmbedding
 from einops import rearrange, pack, unpack, reduce, repeat
 
 from librosa import filters
+from ..device_utils import should_fallback_to_cpu_for_complex_ops
 
 
 def exists(val):
@@ -338,9 +339,9 @@ class MelBandRoformer(Module):
         """
 
         original_device = raw_audio.device
-        x_is_mps = True if original_device.type == "mps" else False
+        should_fallback = should_fallback_to_cpu_for_complex_ops(original_device)
 
-        if x_is_mps:
+        if should_fallback:
             raw_audio = raw_audio.cpu()
 
         device = raw_audio.device
@@ -368,7 +369,7 @@ class MelBandRoformer(Module):
 
         batch_arange = torch.arange(batch, device=device)[..., None]
 
-        x = stft_repr[batch_arange, self.freq_indices.cpu()] if x_is_mps else stft_repr[batch_arange, self.freq_indices]
+        x = stft_repr[batch_arange, self.freq_indices.cpu()] if should_fallback else stft_repr[batch_arange, self.freq_indices]
 
         x = rearrange(x, "b f t c -> b t (f c)")
 
@@ -391,7 +392,7 @@ class MelBandRoformer(Module):
         masks = torch.stack([fn(x) for fn in self.mask_estimators], dim=1)
         masks = rearrange(masks, "b n t (f c) -> b n f t c", c=2)
 
-        if x_is_mps:
+        if should_fallback:
             masks = masks.cpu()
 
         stft_repr = rearrange(stft_repr, "b f t c -> b 1 f t c")
@@ -401,21 +402,30 @@ class MelBandRoformer(Module):
 
         masks = masks.type(stft_repr.dtype)
 
-        if x_is_mps:
+        if should_fallback:
             scatter_indices = repeat(self.freq_indices.cpu(), "f -> b n f t", b=batch, n=self.num_stems, t=stft_repr.shape[-1])
         else:
             scatter_indices = repeat(self.freq_indices, "f -> b n f t", b=batch, n=self.num_stems, t=stft_repr.shape[-1])
 
         stft_repr_expanded_stems = repeat(stft_repr, "b 1 ... -> b n ...", n=self.num_stems)
-        masks_summed = (
-            torch.zeros_like(stft_repr_expanded_stems.cpu() if x_is_mps else stft_repr_expanded_stems)
-            .scatter_add_(2, scatter_indices.cpu() if x_is_mps else scatter_indices, masks.cpu() if x_is_mps else masks)
-            .to(device)
-        )
+        if should_fallback:
+            masks_summed = (
+                torch.zeros_like(stft_repr_expanded_stems.cpu())
+                .scatter_add_(2, scatter_indices.cpu(), masks.cpu())
+                .to(device)
+            )
+        else:
+            # MPS may not support complex scatter_add directly; scatter on real/imag separately.
+            masks_summed_real = torch.view_as_real(torch.zeros_like(stft_repr_expanded_stems))
+            masks_real = torch.view_as_real(masks)
+            scatter_indices_real = scatter_indices.unsqueeze(-1).expand_as(masks_real)
+            masks_summed = torch.view_as_complex(
+                masks_summed_real.scatter_add_(2, scatter_indices_real, masks_real).contiguous()
+            )
 
         denom = repeat(self.num_bands_per_freq, "f -> (f r) 1", r=channels)
 
-        if x_is_mps:
+        if should_fallback:
             denom = denom.cpu()
 
         masks_averaged = masks_summed / denom.clamp(min=1e-8)
@@ -424,12 +434,16 @@ class MelBandRoformer(Module):
 
         stft_repr = rearrange(stft_repr, "b n (f s) t -> (b n s) f t", s=self.audio_channels)
 
-        recon_audio = torch.istft(stft_repr.cpu() if x_is_mps else stft_repr, **self.stft_kwargs, window=stft_window.cpu() if x_is_mps else stft_window, return_complex=False, length=istft_length)
+        recon_audio = torch.istft(stft_repr.cpu() if should_fallback else stft_repr, **self.stft_kwargs, window=stft_window.cpu() if should_fallback else stft_window, return_complex=False, length=istft_length)
 
         recon_audio = rearrange(recon_audio, "(b n s) t -> b n s t", b=batch, s=self.audio_channels, n=self.num_stems)
 
         if self.num_stems == 1:
             recon_audio = rearrange(recon_audio, "b 1 s t -> b s t")
+
+        # Keep output device consistent with input device for inference callers.
+        if should_fallback:
+            recon_audio = recon_audio.to(original_device)
 
         if not exists(target):
             return recon_audio
@@ -461,11 +475,11 @@ class MelBandRoformer(Module):
         total_loss = loss + weighted_multi_resolution_loss
 
         # Move the total loss back to the original device if necessary
-        if x_is_mps:
+        if should_fallback:
             total_loss = total_loss.to(original_device)
 
         if not return_loss_breakdown:
             return total_loss
 
         # If detailed loss breakdown is requested, ensure all components are on the original device
-        return total_loss, (loss.to(original_device) if x_is_mps else loss, multi_stft_resolution_loss.to(original_device) if x_is_mps else multi_stft_resolution_loss)
+        return total_loss, (loss.to(original_device) if should_fallback else loss, multi_stft_resolution_loss.to(original_device) if should_fallback else multi_stft_resolution_loss)

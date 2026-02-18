@@ -306,16 +306,15 @@ class MDXCSeparator(CommonSeparator):
             step = chunk_size if desired_step <= 0 else min(desired_step, chunk_size)
             self.logger.debug(f"Step: {step} (desired={desired_step})")
 
-            # Create a weighting table and convert it to a PyTorch tensor
-            window = torch.tensor(signal.windows.hamming(chunk_size), dtype=torch.float32)
-
             device = next(self.model_run.parameters()).device
+            # Create the weighting table directly on the inference device.
+            window = torch.tensor(signal.windows.hamming(chunk_size), dtype=torch.float32, device=device)
 
 
             with torch.no_grad():
                 req_shape = (len(self.model_data_cfgdict.training.instruments),) + tuple(mix.shape)
-                result = torch.zeros(req_shape, dtype=torch.float32)
-                counter = torch.zeros(req_shape, dtype=torch.float32)
+                result = torch.zeros(req_shape, dtype=torch.float32, device=device)
+                counter = torch.zeros(req_shape, dtype=torch.float32, device=device)
 
                 for i in tqdm(range(0, mix.shape[1], step)):
                     part = mix[:, i : i + chunk_size]
@@ -325,8 +324,8 @@ class MDXCSeparator(CommonSeparator):
                         length = chunk_size
                     part = part.to(device)
                     x = self.model_run(part.unsqueeze(0))[0]
-                    x = x.cpu()
-                    # Perform overlap_add on CPU
+                    if x.device != device:
+                        x = x.to(device)
                     if i + chunk_size > mix.shape[1]:
                         # Fixed to correctly add to the end of the tensor
                         start_idx = result.shape[-1] - chunk_size
@@ -343,7 +342,7 @@ class MDXCSeparator(CommonSeparator):
             inferenced_outputs = result / counter.clamp(min=1e-10)
 
         else:
-            mix = torch.tensor(mix, dtype=torch.float32)
+            mix = torch.tensor(mix, dtype=torch.float32, device=self.torch_device)
 
             try:
                 num_stems = self.model_run.num_target_instruments
@@ -368,7 +367,14 @@ class MDXCSeparator(CommonSeparator):
             pad_size = hop_size - (mix_shape - chunk_size) % hop_size
             self.logger.debug(f"Pad size: {pad_size}")
 
-            mix = torch.cat([torch.zeros(2, chunk_size - hop_size), mix, torch.zeros(2, pad_size + chunk_size - hop_size)], 1)
+            mix = torch.cat(
+                [
+                    torch.zeros(2, chunk_size - hop_size, device=mix.device),
+                    mix,
+                    torch.zeros(2, pad_size + chunk_size - hop_size, device=mix.device),
+                ],
+                1,
+            )
             self.logger.debug(f"Mix shape: {mix.shape}")
 
             chunks = mix.unfold(1, chunk_size, hop_size).transpose(0, 1)
@@ -380,7 +386,11 @@ class MDXCSeparator(CommonSeparator):
             # accumulated_outputs is used to accumulate the output from processing each batch of chunks through the model.
             # It starts as a tensor of zeros and is updated in-place as the model processes each batch.
             # The variable holds the combined result of all processed batches, which, after post-processing, represents the separated audio sources.
-            accumulated_outputs = torch.zeros(num_stems, *mix.shape) if num_stems > 1 else torch.zeros_like(mix)
+            accumulated_outputs = (
+                torch.zeros(num_stems, *mix.shape, device=mix.device)
+                if num_stems > 1
+                else torch.zeros_like(mix)
+            )
 
             with torch.no_grad():
                 count = 0
@@ -393,9 +403,7 @@ class MDXCSeparator(CommonSeparator):
                     # Since single_batch_result can contain multiple output tensors (one for each piece of audio in the batch),
                     # individual_output is used to iterate through these tensors and accumulate them into accumulated_outputs.
                     for individual_output in single_batch_result:
-                        individual_output_cpu = individual_output.cpu()
-                        # Accumulate outputs on CPU
-                        accumulated_outputs[..., count * hop_size : count * hop_size + chunk_size] += individual_output_cpu
+                        accumulated_outputs[..., count * hop_size : count * hop_size + chunk_size] += individual_output
                         count += 1
 
             self.logger.debug("Calculating inferenced outputs based on accumulated outputs and overlap")

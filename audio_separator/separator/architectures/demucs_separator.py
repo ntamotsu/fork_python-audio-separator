@@ -166,7 +166,7 @@ class DemucsSeparator(CommonSeparator):
         self.logger.debug("Starting demixing process in demix_demucs...")
 
         processed = {}
-        mix = torch.tensor(mix, dtype=torch.float32)
+        mix = torch.tensor(mix, dtype=torch.float32, device=self.torch_device)
         ref = mix.mean(0)
         mix = (mix - ref.mean()) / ref.std()
         mix_infer = mix
