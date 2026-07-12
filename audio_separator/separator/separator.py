@@ -765,6 +765,7 @@ class Separator:
             "invert_using_spec": self.invert_using_spec,
             "sample_rate": self.sample_rate,
             "use_soundfile": self.use_soundfile,
+            "use_autocast": self.use_autocast,
         }
 
         # Instantiate the appropriate separator class depending on the model type
@@ -901,7 +902,8 @@ class Separator:
 
         # Run separation method for the loaded model with autocast enabled if supported by the device
         output_files = None
-        if self.use_autocast and autocast_mode.is_autocast_available(self.torch_device.type):
+        native_mps_fp16 = getattr(self.model_instance, "is_native_mps_fp16", False)
+        if self.use_autocast and not native_mps_fp16 and autocast_mode.is_autocast_available(self.torch_device.type):
             self.logger.debug("Autocast available.")
             with autocast_mode.autocast(self.torch_device.type):
                 output_files = self.model_instance.separate(audio_file_path, custom_output_names)

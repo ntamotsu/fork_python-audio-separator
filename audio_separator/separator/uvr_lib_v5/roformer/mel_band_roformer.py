@@ -372,6 +372,7 @@ class MelBandRoformer(Module):
         x = stft_repr[batch_arange, self.freq_indices.cpu()] if should_fallback else stft_repr[batch_arange, self.freq_indices]
 
         x = rearrange(x, "b f t c -> b t (f c)")
+        x = x.to(self.band_split.to_features[0][1].weight.dtype)
 
         x = self.band_split(x)
 
@@ -397,6 +398,7 @@ class MelBandRoformer(Module):
 
         stft_repr = rearrange(stft_repr, "b f t c -> b 1 f t c")
 
+        masks = masks.to(stft_repr.dtype)
         stft_repr = torch.view_as_complex(stft_repr)
         masks = torch.view_as_complex(masks)
 
