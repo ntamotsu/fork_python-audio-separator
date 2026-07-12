@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import platform
+import random
 import statistics
 import subprocess
 import sys
@@ -16,6 +17,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import torch
 
 from audio_separator.separator import Separator
@@ -42,6 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", choices=("auto", "mps", "cpu"), default="mps")
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--autocast", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--mdxc-segment-size", type=int, default=1101)
     parser.add_argument("--mdxc-overlap", type=int, default=8)
@@ -72,6 +75,14 @@ def synchronize(device: torch.device) -> None:
         torch.mps.synchronize()
     elif device.type == "cuda":
         torch.cuda.synchronize(device)
+
+
+def seed_everything(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.backends.mps.is_available():
+        torch.mps.manual_seed(seed)
 
 
 def mps_memory() -> dict[str, int] | None:
@@ -143,7 +154,8 @@ def build_separator(args: argparse.Namespace, model_output_dir: Path) -> Separat
     return separator
 
 
-def timed_separation(separator: Separator, audio_file: Path) -> tuple[float, list[str]]:
+def timed_separation(separator: Separator, audio_file: Path, seed: int) -> tuple[float, list[str]]:
+    seed_everything(seed)
     synchronize(separator.torch_device)
     started_at = time.perf_counter()
     output_files = separator.separate(str(audio_file))
@@ -158,6 +170,7 @@ def benchmark_model(args: argparse.Namespace, model: str) -> dict[str, Any]:
     model_output_dir.mkdir(parents=True, exist_ok=True)
     separator = build_separator(args, model_output_dir)
 
+    seed_everything(args.seed)
     synchronize(separator.torch_device)
     started_at = time.perf_counter()
     separator.load_model(model)
@@ -166,13 +179,13 @@ def benchmark_model(args: argparse.Namespace, model: str) -> dict[str, Any]:
 
     warmup_seconds = []
     for _ in range(args.warmup):
-        elapsed, _ = timed_separation(separator, args.audio_file)
+        elapsed, _ = timed_separation(separator, args.audio_file, args.seed)
         warmup_seconds.append(elapsed)
 
     runs = []
     output_files: list[str] = []
     for iteration in range(1, args.repeats + 1):
-        elapsed, output_files = timed_separation(separator, args.audio_file)
+        elapsed, output_files = timed_separation(separator, args.audio_file, args.seed)
         run = {
             "iteration": iteration,
             "seconds": elapsed,
@@ -223,6 +236,7 @@ def main() -> int:
             "autocast": args.autocast,
             "warmup": args.warmup,
             "repeats": args.repeats,
+            "seed": args.seed,
             "mdxc_segment_size": args.mdxc_segment_size,
             "mdxc_overlap": args.mdxc_overlap,
             "mdxc_batch_size": args.mdxc_batch_size,
