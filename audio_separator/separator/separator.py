@@ -199,6 +199,7 @@ class Separator:
 
         self.onnx_execution_provider = None
         self.model_instance = None
+        self._loaded_model_filename = None
 
         self.model_is_uvr_vip = False
         self.model_friendly_name = None
@@ -719,11 +720,15 @@ class Separator:
 
         return model_data
 
-    def load_model(self, model_filename="model_bs_roformer_ep_317_sdr_12.9755.ckpt"):
+    def load_model(self, model_filename="model_bs_roformer_ep_317_sdr_12.9755.ckpt", force_reload=False):
         """
         This method instantiates the architecture-specific separation class,
         loading the separation model into memory, downloading it first if necessary.
         """
+        if not force_reload and self.model_instance is not None and getattr(self, "_loaded_model_filename", None) == model_filename:
+            self.logger.info(f"Model {model_filename} is already loaded, reusing it.")
+            return
+
         self.logger.info(f"Loading model {model_filename}...")
 
         load_model_start_time = time.perf_counter()
@@ -806,6 +811,7 @@ class Separator:
                 self.logger.info(f"Roformer loading stats: {roformer_stats}")
                 
         # Log the completion of the model load process
+        self._loaded_model_filename = model_filename
         self.logger.debug("Loading model completed.")
         self.logger.info(f'Load model duration: {time.strftime("%H:%M:%S", time.gmtime(int(time.perf_counter() - load_model_start_time)))}')
 
