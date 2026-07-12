@@ -254,6 +254,19 @@ class MDXCSeparator(CommonSeparator):
             result[..., start : start + safe_len] += x[..., :safe_len] * weights[:safe_len]
         return result
 
+    @staticmethod
+    def _roformer_chunk_starts(audio_length: int, chunk_size: int, step: int) -> list[int]:
+        """音源全体を覆い、末尾揃えのchunkを重複させない開始位置を返す。"""
+        starts = []
+        for offset in range(0, audio_length, step):
+            if offset + chunk_size >= audio_length:
+                tail_start = max(audio_length - chunk_size, 0)
+                if not starts or starts[-1] != tail_start:
+                    starts.append(tail_start)
+                break
+            starts.append(offset)
+        return starts
+
     def demix(self, mix: np.ndarray) -> dict:
         """
         Demixes the input mix into primary and secondary sources using the model and model data.
@@ -316,28 +329,18 @@ class MDXCSeparator(CommonSeparator):
                 result = torch.zeros(req_shape, dtype=torch.float32, device=device)
                 counter = torch.zeros(req_shape, dtype=torch.float32, device=device)
 
-                for i in tqdm(range(0, mix.shape[1], step)):
-                    part = mix[:, i : i + chunk_size]
+                chunk_starts = self._roformer_chunk_starts(mix.shape[1], chunk_size, step)
+                for start_idx in tqdm(chunk_starts):
+                    part = mix[:, start_idx : start_idx + chunk_size]
                     length = part.shape[-1]
-                    if i + chunk_size > mix.shape[1]:
-                        part = mix[:, -chunk_size:]
-                        length = chunk_size
                     part = part.to(device)
                     x = self.model_run(part.unsqueeze(0))[0]
                     if x.device != device:
                         x = x.to(device)
-                    if i + chunk_size > mix.shape[1]:
-                        # Fixed to correctly add to the end of the tensor
-                        start_idx = result.shape[-1] - chunk_size
-                        result = self.overlap_add(result, x, window, start_idx, length)
-                        safe_len = min(length, x.shape[-1], window.shape[0])
-                        if safe_len > 0:
-                            counter[..., start_idx : start_idx + safe_len] += window[:safe_len]
-                    else:
-                        result = self.overlap_add(result, x, window, i, length)
-                        safe_len = min(length, x.shape[-1], window.shape[0])
-                        if safe_len > 0:
-                            counter[..., i : i + safe_len] += window[:safe_len]
+                    result = self.overlap_add(result, x, window, start_idx, length)
+                    safe_len = min(length, x.shape[-1], window.shape[0])
+                    if safe_len > 0:
+                        counter[..., start_idx : start_idx + safe_len] += window[:safe_len]
 
             inferenced_outputs = result / counter.clamp(min=1e-10)
 
