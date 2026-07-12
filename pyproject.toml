@@ -36,8 +36,14 @@ numpy = ">=2"
 librosa = ">=0.10"
 samplerate = "0.1.0"
 six = ">=1.16"
-torch = ">=2.13,<3"
-torchvision = ">=0.28,<0.29"
+torch = [
+    { version = ">=2.13,<3", markers = "sys_platform == 'darwin' and platform_machine == 'arm64'" },
+    { version = ">=2.3,<2.9", markers = "sys_platform != 'darwin' or platform_machine != 'arm64'" },
+]
+torchvision = [
+    { version = ">=0.28,<0.29", markers = "sys_platform == 'darwin' and platform_machine == 'arm64'" },
+    { version = ">=0.18,<0.24", markers = "sys_platform != 'darwin' or platform_machine != 'arm64'" },
+]
 torch_directml = {version = "*", optional = true}
 tqdm = "*"
 pydub = ">=0.25"
