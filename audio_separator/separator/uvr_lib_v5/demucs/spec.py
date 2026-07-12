@@ -6,7 +6,7 @@
 """Conveniance wrapper to perform STFT and iSTFT"""
 
 import torch as th
-from ..device_utils import should_fallback_to_cpu_for_complex_ops
+from audio_separator.separator.uvr_lib_v5.device_utils import should_fallback_to_cpu_for_complex_ops
 
 
 def spectro(x, n_fft=512, hop_length=None, pad=0):

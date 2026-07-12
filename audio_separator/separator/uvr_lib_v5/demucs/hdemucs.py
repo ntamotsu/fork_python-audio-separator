@@ -16,7 +16,7 @@ from .filtering import wiener
 from .demucs import DConv, rescale_module
 from .states import capture_init
 from .spec import spectro, ispectro
-from ..device_utils import should_fallback_to_cpu_for_complex_ops
+from audio_separator.separator.uvr_lib_v5.device_utils import should_fallback_to_cpu_for_complex_ops
 
 
 def pad1d(x: torch.Tensor, paddings: tp.Tuple[int, int], mode: str = "constant", value: float = 0.0):

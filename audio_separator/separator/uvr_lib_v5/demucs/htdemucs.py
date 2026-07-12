@@ -22,7 +22,7 @@ from .demucs import rescale_module
 from .states import capture_init
 from .spec import spectro, ispectro
 from .hdemucs import pad1d, ScaledEmbedding, HEncLayer, MultiWrap, HDecLayer
-from ..device_utils import should_fallback_to_cpu_for_complex_ops
+from audio_separator.separator.uvr_lib_v5.device_utils import should_fallback_to_cpu_for_complex_ops
 
 
 class HTDemucs(nn.Module):

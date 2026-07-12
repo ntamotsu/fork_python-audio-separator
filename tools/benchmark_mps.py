@@ -148,6 +148,8 @@ def timed_separation(separator: Separator, audio_file: Path) -> tuple[float, lis
     started_at = time.perf_counter()
     output_files = separator.separate(str(audio_file))
     synchronize(separator.torch_device)
+    if not output_files:
+        raise RuntimeError("分離結果が0件でした。直前のerror logを確認してください。")
     return time.perf_counter() - started_at, output_files
 
 
