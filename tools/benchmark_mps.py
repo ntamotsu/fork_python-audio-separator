@@ -46,6 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--autocast", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--torch-compile", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--mdxc-segment-size", type=int, default=1101)
     parser.add_argument("--mdxc-overlap", type=int, default=8)
     parser.add_argument("--mdxc-batch-size", type=int, default=1)
@@ -121,6 +122,7 @@ def build_separator(args: argparse.Namespace, model_output_dir: Path) -> Separat
         amplification_threshold=0.0,
         use_soundfile=True,
         use_autocast=args.autocast,
+        use_torch_compile=args.torch_compile,
         mdxc_params={
             "segment_size": args.mdxc_segment_size,
             "override_model_segment_size": True,
@@ -150,6 +152,8 @@ def build_separator(args: argparse.Namespace, model_output_dir: Path) -> Separat
         if requested_device.type == "mps" and not torch.backends.mps.is_available():
             raise RuntimeError("MPSは利用できません。")
         separator.torch_device = requested_device
+        separator.torch_device_cpu = torch.device("cpu")
+        separator.torch_device_mps = requested_device if requested_device.type == "mps" else None
         separator.onnx_execution_provider = ["CPUExecutionProvider"]
     return separator
 
@@ -237,6 +241,7 @@ def main() -> int:
             "warmup": args.warmup,
             "repeats": args.repeats,
             "seed": args.seed,
+            "torch_compile": args.torch_compile,
             "mdxc_segment_size": args.mdxc_segment_size,
             "mdxc_overlap": args.mdxc_overlap,
             "mdxc_batch_size": args.mdxc_batch_size,

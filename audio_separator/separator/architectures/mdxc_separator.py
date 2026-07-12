@@ -98,6 +98,7 @@ class MDXCSeparator(CommonSeparator):
                     self.roformer_model_type = getattr(result, "model_info", {}).get("model_type")
                     self._configure_model_precision()
                     self.model_run.to(self.torch_device).eval()
+                    self._configure_model_compilation()
                 else:
                     error_msg = getattr(result, "error_message", "RoformerLoader unsuccessful")
                     self.logger.error(f"Failed to load Roformer model: {error_msg}")
@@ -129,6 +130,19 @@ class MDXCSeparator(CommonSeparator):
             self.model_run.half()
             self.logger.info("Using native float16 for MelBand Roformer on MPS.")
 
+    def _configure_model_compilation(self):
+        """MPS MelBand Roformerの反復Transformerだけを遅延compileする。"""
+        self.is_torch_compiled = False
+        if not self.use_torch_compile or not self.is_native_mps_fp16:
+            return
+
+        for time_transformer, freq_transformer in self.model_run.layers:
+            time_transformer.compile()
+            freq_transformer.compile()
+
+        self.is_torch_compiled = True
+        self.logger.info("Using regional torch.compile for MelBand Roformer on MPS.")
+
     def separate(self, audio_file_path, custom_output_names=None):
         """
         Separates the audio file into primary and secondary sources based on the model's configuration.
@@ -152,17 +166,12 @@ class MDXCSeparator(CommonSeparator):
 
         # Check if audio is shorter than threshold
         audio_duration_seconds = mix.shape[1] / self.sample_rate
-        if audio_duration_seconds < 10.0:
-            # Only change and warn if it wasn't already set by the user
-            if not self.override_model_segment_size:
-                self.override_model_segment_size = True
-                self.logger.warning(f"Audio duration ({audio_duration_seconds:.2f}s) is less than 10 seconds.")
-                self.logger.warning("Automatically enabling override_model_segment_size for better processing of short audio.")
+        override_model_segment_size = self._use_model_segment_override(audio_duration_seconds)
 
         self.logger.debug("Normalizing mix before demixing...")
         mix = spec_utils.normalize(wave=mix, max_peak=self.normalization_threshold, min_peak=self.amplification_threshold)
 
-        source = self.demix(mix=mix)
+        source = self.demix(mix=mix, override_model_segment_size=override_model_segment_size)
         self.logger.debug("Demixing completed.")
 
         output_files = []
@@ -241,6 +250,14 @@ class MDXCSeparator(CommonSeparator):
 
         return output_files
 
+    def _use_model_segment_override(self, audio_duration_seconds: float) -> bool:
+        """短尺用overrideをinstanceへ残さず、この入力だけに適用する。"""
+        is_short_audio = audio_duration_seconds < 10.0
+        if is_short_audio and not self.override_model_segment_size:
+            self.logger.warning(f"Audio duration ({audio_duration_seconds:.2f}s) is less than 10 seconds.")
+            self.logger.warning("Automatically enabling override_model_segment_size for better processing of short audio.")
+        return self.override_model_segment_size or is_short_audio
+
     def pitch_fix(self, source, sr_pitched, orig_mix):
         """
         Change the pitch of the source audio by a number of semitones.
@@ -281,16 +298,19 @@ class MDXCSeparator(CommonSeparator):
             starts.append(offset)
         return starts
 
-    def demix(self, mix: np.ndarray) -> dict:
+    def demix(self, mix: np.ndarray, override_model_segment_size: bool | None = None) -> dict:
         """
         Demixes the input mix into primary and secondary sources using the model and model data.
 
         Args:
             mix (np.ndarray): The mix to be demixed.
+            override_model_segment_size (bool | None): This input's segment-size override.
         Returns:
             dict: A dictionary containing the demixed sources.
         """
         orig_mix = mix
+        if override_model_segment_size is None:
+            override_model_segment_size = self.override_model_segment_size
 
         if self.pitch_shift != 0:
             self.logger.debug(f"Shifting pitch by -{self.pitch_shift} semitones...")
@@ -301,7 +321,7 @@ class MDXCSeparator(CommonSeparator):
 
             mix = torch.tensor(mix, dtype=torch.float32)
 
-            if self.override_model_segment_size:
+            if override_model_segment_size:
                 mdx_segment_size = self.segment_size
                 self.logger.debug(f"Using configured segment size: {mdx_segment_size}")
             else:
@@ -367,7 +387,7 @@ class MDXCSeparator(CommonSeparator):
                 num_stems = self.model_run.module.num_target_instruments
             self.logger.debug(f"Number of stems: {num_stems}")
 
-            if self.override_model_segment_size:
+            if override_model_segment_size:
                 mdx_segment_size = self.segment_size
                 self.logger.debug(f"Using configured segment size: {mdx_segment_size}")
             else:

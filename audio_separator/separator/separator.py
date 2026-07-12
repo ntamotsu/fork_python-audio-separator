@@ -48,6 +48,7 @@ class Separator:
         sample_rate (int): The sample rate of the audio.
         use_soundfile (bool): Use soundfile for audio writing, can solve OOM issues.
         use_autocast (bool): Flag to use PyTorch autocast for faster inference.
+        use_torch_compile (bool): Compile repeated MelBand Roformer blocks on MPS.
 
     MDX Architecture Specific Attributes:
         hop_length (int): The hop length for STFT.
@@ -94,6 +95,7 @@ class Separator:
         sample_rate=44100,
         use_soundfile=False,
         use_autocast=False,
+        use_torch_compile=False,
         use_directml=False,
         chunk_duration=None,
         mdx_params={"hop_length": 1024, "segment_size": 256, "overlap": 0.25, "batch_size": 1, "enable_denoise": False},
@@ -182,6 +184,7 @@ class Separator:
 
         self.use_soundfile = use_soundfile
         self.use_autocast = use_autocast
+        self.use_torch_compile = use_torch_compile
         self.use_directml = use_directml
 
         self.chunk_duration = chunk_duration
@@ -766,6 +769,7 @@ class Separator:
             "sample_rate": self.sample_rate,
             "use_soundfile": self.use_soundfile,
             "use_autocast": self.use_autocast,
+            "use_torch_compile": self.use_torch_compile,
         }
 
         # Instantiate the appropriate separator class depending on the model type

@@ -84,6 +84,7 @@ class CommonSeparator:
         self.sample_rate = config.get("sample_rate")
         self.use_soundfile = config.get("use_soundfile")
         self.use_autocast = config.get("use_autocast", False)
+        self.use_torch_compile = config.get("use_torch_compile", False)
         self.is_native_mps_fp16 = False
         
         # Roformer-specific loading support

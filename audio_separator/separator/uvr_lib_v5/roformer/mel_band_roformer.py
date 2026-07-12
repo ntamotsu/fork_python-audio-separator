@@ -48,7 +48,8 @@ class RMSNorm(Module):
 
     def forward(self, x):
         x = x.to(self.gamma.device)
-        return F.normalize(x, dim=-1) * self.scale * self.gamma
+        normalized = F.normalize(x.float(), dim=-1).to(x.dtype)
+        return normalized * self.scale * self.gamma
 
 
 class FeedForward(Module):

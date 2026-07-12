@@ -1,3 +1,5 @@
+from unittest.mock import Mock
+
 import pytest
 
 from audio_separator.separator.architectures.mdxc_separator import MDXCSeparator
@@ -14,3 +16,13 @@ from audio_separator.separator.architectures.mdxc_separator import MDXCSeparator
 )
 def test_roformer_chunk_starts_cover_tail_once(audio_length, chunk_size, step, expected):
     assert MDXCSeparator._roformer_chunk_starts(audio_length, chunk_size, step) == expected
+
+
+def test_short_audio_override_does_not_mutate_reused_instance():
+    separator = object.__new__(MDXCSeparator)
+    separator.override_model_segment_size = False
+    separator.logger = Mock()
+
+    assert separator._use_model_segment_override(5.0) is True
+    assert separator.override_model_segment_size is False
+    assert separator._use_model_segment_override(20.0) is False
