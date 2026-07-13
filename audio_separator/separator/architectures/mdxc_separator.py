@@ -3,6 +3,7 @@ import sys
 
 import torch
 import numpy as np
+from rotary_embedding_torch import RotaryEmbedding
 from tqdm import tqdm
 from ml_collections import ConfigDict
 from scipy import signal
@@ -127,13 +128,28 @@ class MDXCSeparator(CommonSeparator):
         )
         self.is_native_mps_fp16 = self.use_autocast and self.torch_device.type == "mps" and is_mel_band_roformer
         if self.is_native_mps_fp16:
+            # RotaryEmbeddingの角度は系列後半ほどfp16の量子化誤差が拡大するため、
+            # model全体をhalf化する前の値を保持し、周波数だけfp32へ戻す。
+            rotary_freqs = [
+                (module, module.freqs.detach().float().clone())
+                for module in self.model_run.modules()
+                if isinstance(module, RotaryEmbedding)
+            ]
             self.model_run.half()
+            for rotary_embed, freqs in rotary_freqs:
+                rotary_embed.freqs.data = freqs.to(rotary_embed.freqs.device)
+                rotary_embed.cached_freqs = None
             self.logger.info("Using native float16 for MelBand Roformer on MPS.")
 
     def _configure_model_compilation(self):
         """MPS MelBand Roformerの反復Transformerだけを遅延compileする。"""
         self.is_torch_compiled = False
-        if not self.use_torch_compile or not self.is_native_mps_fp16:
+        if not self.use_torch_compile:
+            return
+        if not self.is_native_mps_fp16:
+            self.logger.warning(
+                "Skipping regional torch.compile: it requires MPS, use_autocast=True, and a MelBand Roformer model."
+            )
             return
 
         for time_transformer, freq_transformer in self.model_run.layers:
@@ -288,6 +304,11 @@ class MDXCSeparator(CommonSeparator):
     @staticmethod
     def _roformer_chunk_starts(audio_length: int, chunk_size: int, step: int) -> list[int]:
         """音源全体を覆い、末尾揃えのchunkを重複させない開始位置を返す。"""
+        if chunk_size <= 0:
+            raise ValueError("chunk_sizeは1以上にしてください。")
+        if step <= 0 or step > chunk_size:
+            raise ValueError("stepは1以上かつchunk_size以下にしてください。")
+
         starts = []
         for offset in range(0, audio_length, step):
             if offset + chunk_size >= audio_length:

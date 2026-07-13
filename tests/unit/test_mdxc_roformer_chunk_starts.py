@@ -18,6 +18,12 @@ def test_roformer_chunk_starts_cover_tail_once(audio_length, chunk_size, step, e
     assert MDXCSeparator._roformer_chunk_starts(audio_length, chunk_size, step) == expected
 
 
+@pytest.mark.parametrize(("chunk_size", "step"), [(0, 0), (4, 0), (4, 5)])
+def test_roformer_chunk_starts_reject_invalid_step(chunk_size, step):
+    with pytest.raises(ValueError):
+        MDXCSeparator._roformer_chunk_starts(audio_length=10, chunk_size=chunk_size, step=step)
+
+
 def test_short_audio_override_does_not_mutate_reused_instance():
     separator = object.__new__(MDXCSeparator)
     separator.override_model_segment_size = False

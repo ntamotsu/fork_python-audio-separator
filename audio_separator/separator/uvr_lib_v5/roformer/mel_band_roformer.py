@@ -373,7 +373,7 @@ class MelBandRoformer(Module):
         x = stft_repr[batch_arange, self.freq_indices.cpu()] if should_fallback else stft_repr[batch_arange, self.freq_indices]
 
         x = rearrange(x, "b f t c -> b t (f c)")
-        x = x.to(self.band_split.to_features[0][1].weight.dtype)
+        x = x.to(next(self.band_split.parameters()).dtype)
 
         x = self.band_split(x)
 
