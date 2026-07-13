@@ -42,6 +42,12 @@ def test_mel_band_roformer_uses_native_fp16_for_mps_autocast():
     assert separator.model_run.rotary_embed.cached_freqs is None
     torch.testing.assert_close(separator.model_run.rotary_embed.freqs, expected_freqs, rtol=0, atol=0)
 
+    output = separator.model_run.rotary_embed.rotate_queries_or_keys(torch.randn(1, 1101, 8).half())
+
+    assert output.dtype == torch.float16
+    assert torch.isfinite(output).all()
+    assert separator.model_run.rotary_embed.cached_freqs.dtype == torch.float32
+
 
 def test_native_fp16_is_not_enabled_on_cpu():
     separator = make_separator(device="cpu")
@@ -83,11 +89,15 @@ def test_separator_does_not_wrap_native_fp16_model_in_autocast():
     separator.model_instance.separate.return_value = ["output.wav"]
     separator.print_uvr_vip_message = Mock()
 
-    with patch("audio_separator.separator.separator.autocast_mode.autocast", return_value=nullcontext()) as autocast:
+    with (
+        patch("audio_separator.separator.separator.autocast_mode.autocast", return_value=nullcontext()) as autocast,
+        patch("audio_separator.separator.separator.autocast_mode.is_autocast_available") as is_available,
+    ):
         output_files = separator._separate_file("input.wav")
 
     assert output_files == ["output.wav"]
     autocast.assert_not_called()
+    is_available.assert_not_called()
     separator.logger.debug.assert_any_call("Using native float16 inference for MelBand Roformer on MPS.")
 
 

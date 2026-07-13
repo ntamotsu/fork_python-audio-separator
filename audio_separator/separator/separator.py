@@ -95,7 +95,6 @@ class Separator:
         sample_rate=44100,
         use_soundfile=False,
         use_autocast=False,
-        use_torch_compile=False,
         use_directml=False,
         chunk_duration=None,
         mdx_params={"hop_length": 1024, "segment_size": 256, "overlap": 0.25, "batch_size": 1, "enable_denoise": False},
@@ -103,6 +102,7 @@ class Separator:
         demucs_params={"segment_size": "Default", "shifts": 2, "overlap": 0.25, "segments_enabled": True},
         mdxc_params={"segment_size": 256, "override_model_segment_size": False, "batch_size": 1, "overlap": 8, "pitch_shift": 0},
         info_only=False,
+        use_torch_compile=False,
     ):
         """Initialize the separator."""
         self.logger = logging.getLogger(__name__)
@@ -728,8 +728,8 @@ class Separator:
         This method instantiates the architecture-specific separation class,
         loading the separation model into memory, downloading it first if necessary.
 
-        Consecutive calls with the same filename reuse the loaded instance. Changes made to
-        Separator settings after loading are therefore not applied unless force_reload=True.
+        Consecutive calls with the same filename reuse the loaded instance. Settings captured
+        by that instance at load time are not refreshed unless force_reload=True.
 
         Args:
             model_filename (str): Model filename or model identifier to load.
@@ -914,11 +914,10 @@ class Separator:
         # Run separation method for the loaded model with autocast enabled if supported by the device
         output_files = None
         native_mps_fp16 = getattr(self.model_instance, "is_native_mps_fp16", False)
-        autocast_available = self.use_autocast and autocast_mode.is_autocast_available(self.torch_device.type)
         if native_mps_fp16:
             self.logger.debug("Using native float16 inference for MelBand Roformer on MPS.")
             output_files = self.model_instance.separate(audio_file_path, custom_output_names)
-        elif autocast_available:
+        elif self.use_autocast and autocast_mode.is_autocast_available(self.torch_device.type):
             self.logger.debug("Autocast available.")
             with autocast_mode.autocast(self.torch_device.type):
                 output_files = self.model_instance.separate(audio_file_path, custom_output_names)

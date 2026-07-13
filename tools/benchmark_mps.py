@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import gc
 import json
 import logging
@@ -169,10 +170,16 @@ def timed_separation(separator: Separator, audio_file: Path, seed: int) -> tuple
     return time.perf_counter() - started_at, output_files
 
 
-def benchmark_model(args: argparse.Namespace, model: str) -> dict[str, Any]:
+def benchmark_model(
+    args: argparse.Namespace,
+    model: str,
+    on_device_resolved: Callable[[torch.device], None] | None = None,
+) -> dict[str, Any]:
     model_output_dir = args.output_dir / Path(model).stem
     model_output_dir.mkdir(parents=True, exist_ok=True)
     separator = build_separator(args, model_output_dir)
+    if on_device_resolved is not None:
+        on_device_resolved(separator.torch_device)
 
     seed_everything(args.seed)
     synchronize(separator.torch_device)
@@ -218,16 +225,29 @@ def benchmark_model(args: argparse.Namespace, model: str) -> dict[str, Any]:
     return result
 
 
+def warn_cpu_autocast() -> None:
+    """CPU autocastがfp32基準にならないことをstderrへ警告する。"""
+    print(
+        "警告: CPU + autocastはbfloat16推論です。fp32基準との比較には--no-autocastを指定してください。",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def main() -> int:
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.device == "cpu" and args.autocast:
-        print(
-            "警告: CPU + autocastはbfloat16推論です。fp32基準との比較には--no-autocastを指定してください。",
-            file=sys.stderr,
-            flush=True,
-        )
+    cpu_autocast_warned = False
+
+    def handle_resolved_device(device: torch.device) -> None:
+        nonlocal cpu_autocast_warned
+        if args.autocast and device.type == "cpu" and not cpu_autocast_warned:
+            warn_cpu_autocast()
+            cpu_autocast_warned = True
+
+    revision = git_revision()
+    models = [benchmark_model(args, model, handle_resolved_device) for model in args.models]
 
     report = {
         "environment": {
@@ -235,7 +255,7 @@ def main() -> int:
             "torch": torch.__version__,
             "platform": platform.platform(),
             "processor": platform.processor(),
-            "git_revision": git_revision(),
+            "git_revision": revision,
             "mps_built": torch.backends.mps.is_built(),
             "mps_available": torch.backends.mps.is_available(),
             "mps_environment": {name: os.environ[name] for name in MPS_ENVIRONMENT_VARIABLES if name in os.environ},
@@ -259,7 +279,7 @@ def main() -> int:
             "demucs_shifts": args.demucs_shifts,
             "demucs_overlap": args.demucs_overlap,
         },
-        "models": [benchmark_model(args, model) for model in args.models],
+        "models": models,
     }
 
     serialized = json.dumps(report, ensure_ascii=False, indent=2)

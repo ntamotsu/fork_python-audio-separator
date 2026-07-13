@@ -24,6 +24,11 @@ def test_roformer_chunk_starts_reject_invalid_step(chunk_size, step):
         MDXCSeparator._roformer_chunk_starts(audio_length=10, chunk_size=chunk_size, step=step)
 
 
+def test_roformer_chunk_starts_reject_negative_audio_length():
+    with pytest.raises(ValueError):
+        MDXCSeparator._roformer_chunk_starts(audio_length=-1, chunk_size=4, step=2)
+
+
 def test_short_audio_override_does_not_mutate_reused_instance():
     separator = object.__new__(MDXCSeparator)
     separator.override_model_segment_size = False

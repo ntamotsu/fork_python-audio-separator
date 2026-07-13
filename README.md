@@ -423,7 +423,7 @@ You can process multiple files without reloading the model to save time and memo
 
 You only need to load a model when choosing or changing models. See example below:
 
-Consecutive calls to `load_model()` with the same filename reuse the loaded model. If you change `Separator` settings after loading, call `load_model(..., force_reload=True)` to apply them.
+Consecutive calls to `load_model()` with the same filename reuse the loaded model. If you change settings captured by the loaded model instance, call `load_model(..., force_reload=True)` to apply them.
 
 ```python
 from audio_separator.separator import Separator
