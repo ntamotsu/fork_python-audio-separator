@@ -305,11 +305,11 @@ class MDXCSeparator(CommonSeparator):
     def _roformer_chunk_starts(audio_length: int, chunk_size: int, step: int) -> list[int]:
         """音源全体を覆い、末尾揃えのchunkを重複させない開始位置を返す。"""
         if audio_length < 0:
-            raise ValueError("audio_lengthは0以上にしてください。")
+            raise ValueError("audio_length must be greater than or equal to 0.")
         if chunk_size <= 0:
-            raise ValueError("chunk_sizeは1以上にしてください。")
+            raise ValueError("chunk_size must be greater than 0.")
         if step <= 0 or step > chunk_size:
-            raise ValueError("stepは1以上かつchunk_size以下にしてください。")
+            raise ValueError("step must be greater than 0 and less than or equal to chunk_size.")
 
         starts = []
         for offset in range(0, audio_length, step):
