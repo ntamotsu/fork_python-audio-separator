@@ -88,6 +88,26 @@ def test_separator_does_not_wrap_native_fp16_model_in_autocast():
 
     assert output_files == ["output.wav"]
     autocast.assert_not_called()
+    separator.logger.debug.assert_any_call("Using native float16 inference for MelBand Roformer on MPS.")
+
+
+def test_separator_logs_disabled_autocast():
+    separator = object.__new__(Separator)
+    separator.chunk_duration = None
+    separator.logger = Mock()
+    separator.normalization_threshold = 1.0
+    separator.amplification_threshold = 0.0
+    separator.use_autocast = False
+    separator.torch_device = torch.device("cpu")
+    separator.model_instance = Mock(is_native_mps_fp16=False)
+    separator.model_instance.separate.return_value = ["output.wav"]
+    separator.print_uvr_vip_message = Mock()
+
+    with patch("audio_separator.separator.separator.autocast_mode.is_autocast_available") as is_available:
+        separator._separate_file("input.wav")
+
+    is_available.assert_not_called()
+    separator.logger.debug.assert_any_call("Autocast disabled.")
 
 
 def test_separator_logs_unavailable_autocast():

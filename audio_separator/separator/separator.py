@@ -47,8 +47,8 @@ class Separator:
         invert_using_spec (bool): Flag to invert using spectrogram.
         sample_rate (int): The sample rate of the audio.
         use_soundfile (bool): Use soundfile for audio writing, can solve OOM issues.
-        use_autocast (bool): Flag to use PyTorch autocast for faster inference.
-        use_torch_compile (bool): Compile repeated MelBand Roformer blocks on MPS.
+        use_autocast (bool): Flag to use reduced-precision inference. MPS MelBand Roformer uses native float16.
+        use_torch_compile (bool): Compile repeated MelBand Roformer blocks on MPS native float16.
 
     MDX Architecture Specific Attributes:
         hop_length (int): The hop length for STFT.
@@ -727,6 +727,13 @@ class Separator:
         """
         This method instantiates the architecture-specific separation class,
         loading the separation model into memory, downloading it first if necessary.
+
+        Consecutive calls with the same filename reuse the loaded instance. Changes made to
+        Separator settings after loading are therefore not applied unless force_reload=True.
+
+        Args:
+            model_filename (str): Model filename or model identifier to load.
+            force_reload (bool): Reload even when the same model is already loaded.
         """
         if not force_reload and self.model_instance is not None and getattr(self, "_loaded_model_filename", None) == model_filename:
             self.logger.info(f"Model {model_filename} is already loaded, reusing it.")
@@ -907,12 +914,16 @@ class Separator:
         # Run separation method for the loaded model with autocast enabled if supported by the device
         output_files = None
         native_mps_fp16 = getattr(self.model_instance, "is_native_mps_fp16", False)
-        if self.use_autocast and not native_mps_fp16 and autocast_mode.is_autocast_available(self.torch_device.type):
+        autocast_available = self.use_autocast and autocast_mode.is_autocast_available(self.torch_device.type)
+        if native_mps_fp16:
+            self.logger.debug("Using native float16 inference for MelBand Roformer on MPS.")
+            output_files = self.model_instance.separate(audio_file_path, custom_output_names)
+        elif autocast_available:
             self.logger.debug("Autocast available.")
             with autocast_mode.autocast(self.torch_device.type):
                 output_files = self.model_instance.separate(audio_file_path, custom_output_names)
         else:
-            self.logger.debug("Autocast unavailable.")
+            self.logger.debug("Autocast unavailable." if self.use_autocast else "Autocast disabled.")
             output_files = self.model_instance.separate(audio_file_path, custom_output_names)
 
         # Clear GPU cache to free up memory

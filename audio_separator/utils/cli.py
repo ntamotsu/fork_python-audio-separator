@@ -58,8 +58,8 @@ def main():
     single_stem_help = "Output only single stem, e.g. Instrumental, Vocals, Drums, Bass, Guitar, Piano, Other. Example: --single_stem=Instrumental"
     sample_rate_help = "Modify the sample rate of the output audio (default: %(default)s). Example: --sample_rate=44100"
     use_soundfile_help = "Use soundfile to write audio output (default: %(default)s). Example: --use_soundfile"
-    use_autocast_help = "Use PyTorch autocast for faster inference (default: %(default)s). Do not use for CPU inference. Example: --use_autocast"
-    use_torch_compile_help = "Compile repeated MelBand Roformer blocks on MPS (default: %(default)s). Best for audio longer than about 60 seconds. Example: --use_torch_compile"
+    use_autocast_help = "Use reduced-precision inference (default: %(default)s). MPS MelBand Roformer uses native float16. Do not use for CPU inference. Example: --use_autocast"
+    use_torch_compile_help = "Compile repeated MelBand Roformer blocks on MPS native float16 (default: %(default)s). Requires --use_autocast and is best for audio longer than about 60 seconds. Example: --use_torch_compile"
     chunk_duration_help = "Split audio into chunks of this duration in seconds (default: %(default)s = no chunking). Useful for processing very long audio files on systems with limited memory. Recommended: 600 (10 minutes) for files >1 hour. Chunks are concatenated without overlap/crossfade. Example: --chunk_duration=600"
     custom_output_names_help = 'Custom names for all output files in JSON format (default: %(default)s). Example: --custom_output_names=\'{"Vocals": "vocals_output", "Drums": "drums_output"}\''
 

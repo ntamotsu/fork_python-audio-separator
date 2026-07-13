@@ -196,7 +196,7 @@ def benchmark_model(args: argparse.Namespace, model: str) -> dict[str, Any]:
             "mps_memory": mps_memory(),
         }
         runs.append(run)
-        print(json.dumps({"model": model, **run}, ensure_ascii=False), flush=True)
+        print(json.dumps({"model": model, **run}, ensure_ascii=False), file=sys.stderr, flush=True)
 
     seconds = [run["seconds"] for run in runs]
     result = {
@@ -221,6 +221,13 @@ def benchmark_model(args: argparse.Namespace, model: str) -> dict[str, Any]:
 def main() -> int:
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.device == "cpu" and args.autocast:
+        print(
+            "警告: CPU + autocastはbfloat16推論です。fp32基準との比較には--no-autocastを指定してください。",
+            file=sys.stderr,
+            flush=True,
+        )
 
     report = {
         "environment": {
