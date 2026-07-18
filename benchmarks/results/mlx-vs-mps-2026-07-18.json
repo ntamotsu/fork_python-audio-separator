@@ -181,6 +181,7 @@
     },
     "roformer_229_18s_process_cold": {
       "method": "KimとKaraokeを各fresh processで1回。2モデルとも同じ全尺音源を入力した推論時間の算術和で、製品chainではない。",
+      "mps_compile_state": "各modelをempty Inductor cacheのfresh processで実行したcold初回値。常駐processのwarm定常状態は未計測。",
       "separate_sum_seconds": {
         "mps_eager": 116.12536354083568,
         "mps_cold_regional_compile": 93.16883466718718,
@@ -253,7 +254,10 @@
           "mps_min_snr_db": 53.41656571134537,
           "mps_max_relative_l2": 0.0021338884583265985,
           "mlx_min_snr_db": 11.74367117474006,
-          "mlx_max_relative_l2": 0.25871192132359583
+          "mlx_max_relative_l2": 0.25871192132359583,
+          "mlx_worst_stem": "demucs_drums",
+          "worst_stem_reference_rms": 0.00858713908689865,
+          "note": "基準RMSが約-41 dBFSと小さいためrelative L2は増幅されて見える。同じ分母でMPSは0.213%。"
         },
         "karaoke": {
           "mps_min_snr_db": 64.20931632604622,
@@ -315,6 +319,7 @@
     "fresh processをMPS, MLX, MLX, MPS, MPS, MLXのbalanced ABBAAB順で実行したが、順序自体はrandomizedせず、OS file cacheや温度を完全には統制していない。",
     "34.44秒の主比較は分離モデルの連鎖で、製品のpydub解析・overlay・m4a exportを含まない。",
     "229.18秒と変換コストは各条件1回で分散を測っていない。",
+    "229.18秒のMPS compileはcold初回だけで、常駐processのwarm定常状態を測っていない。",
     "CPU fp32は数値基準であり、ground-truth stemではない。",
     "MLX strict chainは2回目のDeEcho loadをadapter側で省略している。省略しない結果も別途記録した。",
     "backend固有allocator値は意味が違うため比較せず、共通のprocess peak RSSだけを比較した。"
