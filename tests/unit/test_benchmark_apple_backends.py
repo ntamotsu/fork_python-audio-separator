@@ -196,6 +196,20 @@ def test_mps_chain_reports_internal_deecho_cache_reuse(tmp_path):
     runtime = FakeRuntime("mps")
     output_dir = args.output_dir / "mps" / "chain" / "run-1"
     separator = FakeSeparator(output_dir)
+    original_load_model = separator.load_model
+
+    def load_model_with_effective_settings(model_filename):
+        original_load_model(model_filename)
+        is_roformer = model_filename in {
+            benchmark_apple_backends.MODEL_SPECS["kim"].filename,
+            benchmark_apple_backends.MODEL_SPECS["karaoke"].filename,
+        }
+        separator.model_instance = Mock(
+            is_native_mps_fp16=is_roformer,
+            is_torch_compiled=is_roformer,
+        )
+
+    separator.load_model = load_model_with_effective_settings
 
     with patch.object(benchmark_apple_backends, "build_separator", return_value=separator):
         report = benchmark_apple_backends.run_chain_once(
@@ -211,6 +225,18 @@ def test_mps_chain_reports_internal_deecho_cache_reuse(tmp_path):
     assert last_stage["load_model_called"] is True
     assert last_stage["model_instance_reused"] is True
     assert last_stage["reuse_strategy"] == "separator_cache"
+    assert report["effective_backend_settings_scope"] == "final_loaded_model"
+    assert report["effective_backend_settings"] == {
+        "is_native_mps_fp16": False,
+        "is_torch_compiled": False,
+    }
+    assert [stage["effective_backend_settings"] for stage in report["stages"]] == [
+        {"is_native_mps_fp16": True, "is_torch_compiled": True},
+        {"is_native_mps_fp16": False, "is_torch_compiled": False},
+        {"is_native_mps_fp16": True, "is_torch_compiled": True},
+        {"is_native_mps_fp16": False, "is_torch_compiled": False},
+        {"is_native_mps_fp16": False, "is_torch_compiled": False},
+    ]
 
 
 def test_effective_mlx_settings_reports_profile_overrides():
