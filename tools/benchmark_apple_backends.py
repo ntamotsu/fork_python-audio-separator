@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""PyTorch/MPS版とMLX版を同一条件で比較するベンチマーク。"""
+"""PyTorch/MPS版とMLX版を同一条件で比較するベンチマーク。
+
+CPU backendは速度競争ではなく、PyTorch fp32出力の品質基準を作るために使う。
+"""
 
 from __future__ import annotations
 
@@ -150,12 +153,40 @@ class MLXRuntime:
         self.mx.clear_cache()
 
 
+class CPURuntime:
+    """品質検証用のPyTorch fp32基準。速度の主比較には使用しない。"""
+
+    name = "cpu"
+
+    def __init__(self) -> None:
+        import torch
+
+        self.torch = torch
+
+    def synchronize(self) -> None:
+        pass
+
+    def seed(self, seed: int) -> None:
+        random.seed(seed)
+        np.random.seed(seed)
+        self.torch.manual_seed(seed)
+
+    def memory(self) -> dict[str, int | None]:
+        return {}
+
+    def reset_peak_memory(self) -> None:
+        pass
+
+    def cleanup(self) -> None:
+        gc.collect()
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="MPS版とMLX版のpublic separate()を、製品相当設定で計測します。",
+        description="MPS版とMLX版のpublic separate()を製品相当設定で計測し、CPU fp32品質基準も生成します。",
     )
     parser.add_argument("audio_file", type=Path)
-    parser.add_argument("--backend", choices=("mps", "mlx"), required=True)
+    parser.add_argument("--backend", choices=("mps", "mlx", "cpu"), required=True)
     parser.add_argument("--mode", choices=("models", "chain"), default="models")
     parser.add_argument(
         "--model",
@@ -179,6 +210,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--mlx-cache-clear-policy", choices=("aggressive", "deferred"), default="aggressive")
     parser.add_argument("--mlx-write-workers", type=int, default=1)
     parser.add_argument("--mlx-demucs-batch-size", type=int, default=1)
+    parser.add_argument(
+        "--mlx-save-converted-safetensors",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="初回checkpoint変換後のsafetensorsを保存します。変換コスト計測用です。",
+    )
     parser.add_argument(
         "--mlx-deecho-reuse",
         action=argparse.BooleanOptionalAction,
@@ -211,6 +248,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def build_runtime(backend: str) -> BackendRuntime:
     if backend == "mps":
         return MPSRuntime()
+    if backend == "cpu":
+        return CPURuntime()
     return MLXRuntime()
 
 
@@ -246,19 +285,19 @@ def build_separator(args: argparse.Namespace, runtime: BackendRuntime, output_di
         },
     }
 
-    if runtime.name == "mps":
+    if runtime.name in {"mps", "cpu"}:
         from audio_separator.separator import Separator
 
         separator = Separator(
             **common_kwargs,
             use_soundfile=True,
-            use_autocast=True,
-            use_torch_compile=args.torch_compile,
+            use_autocast=runtime.name == "mps",
+            use_torch_compile=args.torch_compile and runtime.name == "mps",
         )
         torch = runtime.torch  # type: ignore[attr-defined]
-        separator.torch_device = torch.device("mps")
+        separator.torch_device = torch.device(runtime.name)
         separator.torch_device_cpu = torch.device("cpu")
-        separator.torch_device_mps = separator.torch_device
+        separator.torch_device_mps = separator.torch_device if runtime.name == "mps" else None
         separator.onnx_execution_provider = ["CPUExecutionProvider"]
         return separator
 
@@ -272,7 +311,7 @@ def build_separator(args: argparse.Namespace, runtime: BackendRuntime, output_di
             "cache_clear_policy": args.mlx_cache_clear_policy,
             "write_workers": args.mlx_write_workers,
         },
-        save_converted_safetensors=False,
+        save_converted_safetensors=args.mlx_save_converted_safetensors,
     )
     strict_errors = getattr(separator, "_set_strict_separation_errors", None)
     if callable(strict_errors):
@@ -409,6 +448,7 @@ def benchmark_model(
     result = {
         "model": model_key,
         "model_filename": spec.filename,
+        "effective_backend_settings": effective_backend_settings(runtime, separator),
         "load_seconds": load_seconds,
         "memory_after_load": memory_after_load,
         "warmup_seconds": warmup_seconds,
@@ -441,6 +481,8 @@ def run_chain_stage(
     source: Path,
     output_dir: Path,
     load_model: bool = True,
+    reused_previous_model: bool = False,
+    reuse_strategy: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Path]]:
     spec = MODEL_SPECS[model_key]
     output_names = chain_output_names(stage_name, spec)
@@ -451,7 +493,9 @@ def run_chain_stage(
         "model": model_key,
         "model_filename": spec.filename,
         "source": str(source),
-        "model_loaded": load_model,
+        "load_model_called": load_model,
+        "model_instance_reused": reused_previous_model,
+        "reuse_strategy": reuse_strategy,
         "load_seconds": load_seconds,
         "separate_seconds": separate_seconds,
         "backend_memory": runtime.memory(),
@@ -528,7 +572,10 @@ def run_chain_once(
         output_dir=output_dir,
     )
     stages.append(backing)
-    reuse_mlx_deecho = runtime.name == "mlx" and args.mlx_deecho_reuse
+    runner_reuses_mlx_deecho = runtime.name == "mlx" and args.mlx_deecho_reuse
+    separator_reuses_deecho = runtime.name in {"mps", "cpu"}
+    reuses_previous_deecho = runner_reuses_mlx_deecho or separator_reuses_deecho
+    reuse_strategy = "runner_skip" if runner_reuses_mlx_deecho else "separator_cache" if separator_reuses_deecho else None
     lead, _ = run_chain_stage(
         args=args,
         runtime=runtime,
@@ -537,9 +584,10 @@ def run_chain_once(
         model_key="deecho",
         source=karaoke_outputs["vocals"],
         output_dir=output_dir,
-        load_model=not reuse_mlx_deecho,
+        load_model=not runner_reuses_mlx_deecho,
+        reused_previous_model=reuses_previous_deecho,
+        reuse_strategy=reuse_strategy,
     )
-    lead["reused_previous_model"] = reuse_mlx_deecho
     stages.append(lead)
 
     runtime.synchronize()
@@ -550,6 +598,7 @@ def run_chain_once(
         "timed_stage_subtotal_seconds": timed_subtotal,
         "runner_overhead_seconds": total_seconds - timed_subtotal,
         "stages": stages,
+        "effective_backend_settings": effective_backend_settings(runtime, separator),
         "backend_memory": runtime.memory(),
         "process_peak_rss_bytes": process_peak_rss_bytes(),
         "output_dir": str(output_dir) if retain_outputs else None,
@@ -643,6 +692,28 @@ def git_revision(path: Path) -> str | None:
         return None
 
 
+def git_worktree_state(path: Path) -> dict[str, Any]:
+    """revisionと、計測コードがcommitと同一かを記録する。"""
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(path), "status", "--porcelain=v1", "--untracked-files=all"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return {"revision": None, "tracked_dirty": None, "untracked_file_count": None}
+    if completed.returncode != 0:
+        return {"revision": None, "tracked_dirty": None, "untracked_file_count": None}
+
+    status_lines = completed.stdout.splitlines()
+    return {
+        "revision": git_revision(path),
+        "tracked_dirty": any(not line.startswith("??") for line in status_lines),
+        "untracked_file_count": sum(line.startswith("??") for line in status_lines),
+    }
+
+
 def package_version(name: str) -> str | None:
     try:
         return metadata.version(name)
@@ -650,7 +721,7 @@ def package_version(name: str) -> str | None:
         return None
 
 
-def package_source(name: str) -> dict[str, str | None] | None:
+def package_source(name: str) -> dict[str, Any] | None:
     """editable installの元repositoryとrevisionを可能なら記録する。"""
     try:
         distribution = metadata.distribution(name)
@@ -665,12 +736,12 @@ def package_source(name: str) -> dict[str, str | None] | None:
     except (KeyError, TypeError, json.JSONDecodeError):
         return None
     if parsed.scheme != "file":
-        return {"url": direct_url.get("url"), "path": None, "git_revision": None}
+        return {"url": direct_url.get("url"), "path": None, "git_state": None}
     source_path = Path(unquote(parsed.path)).resolve()
     return {
         "url": direct_url.get("url"),
         "path": str(source_path),
-        "git_revision": git_revision(source_path),
+        "git_state": git_worktree_state(source_path),
     }
 
 
@@ -699,8 +770,32 @@ def json_safe(value: Any) -> Any:
     return value
 
 
+def effective_backend_settings(runtime: BackendRuntime, separator: Any) -> dict[str, Any]:
+    """backendが初期化後に実際に使う主要設定を返す。"""
+    if runtime.name != "mlx":
+        return {}
+
+    performance_params = getattr(separator, "performance_params", {})
+    architecture_params = getattr(separator, "arch_specific_params", {})
+    if not isinstance(performance_params, dict):
+        performance_params = {}
+    if not isinstance(architecture_params, dict):
+        architecture_params = {}
+    return {
+        "speed_mode": performance_params.get("speed_mode"),
+        "cache_clear_policy": performance_params.get("cache_clear_policy"),
+        "write_workers": performance_params.get("write_workers"),
+        "architecture_batch_sizes": {
+            architecture: params.get("batch_size")
+            for architecture, params in architecture_params.items()
+            if isinstance(params, dict) and "batch_size" in params
+        },
+    }
+
+
 def settings_report(args: argparse.Namespace) -> dict[str, Any]:
     return {
+        "settings_kind": "requested_before_backend_profile_overrides",
         "backend": args.backend,
         "mode": args.mode,
         "models": args.models,
@@ -714,6 +809,7 @@ def settings_report(args: argparse.Namespace) -> dict[str, Any]:
         "mlx_cache_clear_policy": args.mlx_cache_clear_policy,
         "mlx_write_workers": args.mlx_write_workers,
         "mlx_demucs_batch_size": args.mlx_demucs_batch_size,
+        "mlx_save_converted_safetensors": args.mlx_save_converted_safetensors,
         "mlx_deecho_reuse": args.mlx_deecho_reuse,
         "mdxc_segment_size": args.mdxc_segment_size,
         "mdxc_overlap": args.mdxc_overlap,
@@ -740,6 +836,7 @@ def environment_report() -> dict[str, Any]:
         "machine": platform.machine(),
         "processor": platform.processor(),
         "git_revision": git_revision(REPOSITORY_ROOT),
+        "git_state": git_worktree_state(REPOSITORY_ROOT),
         "packages": {
             name: package_version(name)
             for name in (

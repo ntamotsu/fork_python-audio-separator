@@ -80,6 +80,7 @@ def make_args(
         mlx_cache_clear_policy="aggressive",
         mlx_write_workers=1,
         mlx_demucs_batch_size=1,
+        mlx_save_converted_safetensors=False,
         mlx_deecho_reuse=mlx_deecho_reuse,
         mdxc_segment_size=1101,
         mdxc_overlap=8,
@@ -128,14 +129,15 @@ def test_map_named_outputs_rejects_incomplete_or_ambiguous_results(
 
 
 @pytest.mark.parametrize(
-    ("reuse", "expected_deecho_loads", "last_stage_loaded"),
-    [(True, 1, False), (False, 2, True)],
+    ("reuse", "expected_deecho_loads", "load_model_called", "reuse_strategy"),
+    [(True, 1, False, "runner_skip"), (False, 2, True, None)],
 )
 def test_mlx_chain_connects_named_stems_and_controls_deecho_reload(
     tmp_path,
     reuse,
     expected_deecho_loads,
-    last_stage_loaded,
+    load_model_called,
+    reuse_strategy,
 ):
     args = make_args(tmp_path, mlx_deecho_reuse=reuse)
     runtime = FakeRuntime("mlx")
@@ -160,10 +162,79 @@ def test_mlx_chain_connects_named_stems_and_controls_deecho_reload(
         (output_dir / "03_karaoke_karaoke_lead.wav").resolve(),
     ]
     last_stage = report["stages"][-1]
-    assert last_stage["model_loaded"] is last_stage_loaded
-    assert last_stage["reused_previous_model"] is reuse
+    assert last_stage["load_model_called"] is load_model_called
+    assert last_stage["model_instance_reused"] is reuse
+    assert last_stage["reuse_strategy"] == reuse_strategy
     assert all(stage["validation"]["valid"] for stage in report["stages"])
     assert runtime.cleanup_count == 1
+
+
+def test_mps_chain_reports_internal_deecho_cache_reuse(tmp_path):
+    args = make_args(tmp_path, backend="mps")
+    runtime = FakeRuntime("mps")
+    output_dir = args.output_dir / "mps" / "chain" / "run-1"
+    separator = FakeSeparator(output_dir)
+
+    with patch.object(benchmark_apple_backends, "build_separator", return_value=separator):
+        report = benchmark_apple_backends.run_chain_once(
+            args,
+            runtime,
+            output_dir,
+            retain_outputs=True,
+        )
+
+    deecho_filename = benchmark_apple_backends.MODEL_SPECS["deecho"].filename
+    assert separator.loaded_models.count(deecho_filename) == 2
+    last_stage = report["stages"][-1]
+    assert last_stage["load_model_called"] is True
+    assert last_stage["model_instance_reused"] is True
+    assert last_stage["reuse_strategy"] == "separator_cache"
+
+
+def test_effective_mlx_settings_reports_profile_overrides():
+    runtime = FakeRuntime("mlx")
+    separator = Mock(
+        performance_params={
+            "speed_mode": "latency_safe_v3",
+            "cache_clear_policy": "deferred",
+            "write_workers": 2,
+        },
+        arch_specific_params={
+            "Demucs": {"batch_size": 8},
+            "MDXC": {"batch_size": 1},
+            "VR": {"batch_size": 1},
+            "ignored": {"overlap": 8},
+        },
+    )
+
+    assert benchmark_apple_backends.effective_backend_settings(runtime, separator) == {
+        "speed_mode": "latency_safe_v3",
+        "cache_clear_policy": "deferred",
+        "write_workers": 2,
+        "architecture_batch_sizes": {"Demucs": 8, "MDXC": 1, "VR": 1},
+    }
+    assert benchmark_apple_backends.effective_backend_settings(FakeRuntime("mps"), separator) == {}
+
+
+def test_git_worktree_state_separates_tracked_and_untracked_changes(tmp_path):
+    completed = subprocess.CompletedProcess(
+        args=["git"],
+        returncode=0,
+        stdout=" M tools/benchmark.py\n?? scratch.txt\n?? output/result.json\n",
+        stderr="",
+    )
+
+    with (
+        patch.object(benchmark_apple_backends.subprocess, "run", return_value=completed),
+        patch.object(benchmark_apple_backends, "git_revision", return_value="abc123"),
+    ):
+        state = benchmark_apple_backends.git_worktree_state(tmp_path)
+
+    assert state == {
+        "revision": "abc123",
+        "tracked_dirty": True,
+        "untracked_file_count": 2,
+    }
 
 
 def test_importing_benchmark_module_does_not_import_backend_frameworks():
