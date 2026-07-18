@@ -3,8 +3,14 @@
   "date": "2026-07-18",
   "scope": "audio-separator public separate()によるWAVのモデル分離チェーン。製品endpoint全体ではない。",
   "source_revisions": {
-    "python_audio_separator_reported_head_in_all_raw_json": "046447c7f3553cc1eef8a3b391f331391b38393f",
-    "python_audio_separator_speed_runner": "046447c7f3553cc1eef8a3b391f331391b38393f",
+    "python_audio_separator_original_raw_json_reported_head": "046447c7f3553cc1eef8a3b391f331391b38393f",
+    "python_audio_separator_original_speed_runner": "046447c7f3553cc1eef8a3b391f331391b38393f",
+    "python_audio_separator_warm_229s_runner": "b99bb421f419abedaee8179c0e993997f290edee",
+    "warm_229s_runner_scope": "MPS実効native fp16 / compile状態とTORCHINDUCTOR_CACHE_DIRの記録を追加。推論経路は変更しない。",
+    "warm_229s_raw_git_state": {
+      "tracked_dirty": false,
+      "untracked_file_count": 1
+    },
     "python_audio_separator_quality_and_conversion_runner_diff_committed_as": "35921bd35fe89762dfa218288bef97eac1a001a9",
     "quality_and_conversion_runner_diff_scope": "CPU fp32 backendとMLX変換保存flag。既存MPS/MLX推論経路は変更しない。旧reporterはdirty状態を記録しないためraw JSONのHEADは046447cのまま。",
     "mlx_audio_separator": "0ddc8cf5507906b52ac45a9cd9e6d26e881a93f8"
@@ -27,6 +33,14 @@
       "mlx-spectro": "0.7.0",
       "numpy": "2.3.3",
       "soundfile": "0.13.1"
+    },
+    "warm_229s_measurement": {
+      "power_source": "battery",
+      "power_mode": 0,
+      "battery_percent_start": 58,
+      "battery_percent_end": 23,
+      "thermal_warning_after_measurement": false,
+      "performance_warning_after_measurement": false
     }
   },
   "inputs": {
@@ -181,7 +195,7 @@
     },
     "roformer_229_18s_process_cold": {
       "method": "KimとKaraokeを各fresh processで1回。2モデルとも同じ全尺音源を入力した推論時間の算術和で、製品chainではない。",
-      "mps_compile_state": "各modelをempty Inductor cacheのfresh processで実行したcold初回値。常駐processのwarm定常状態は未計測。",
+      "mps_compile_state": "各modelをempty Inductor cacheのfresh processで実行したcold初回値。対応するwarm定常値はroformer_229_18s_warm_steady_stateに記録。",
       "separate_sum_seconds": {
         "mps_eager": 116.12536354083568,
         "mps_cold_regional_compile": 93.16883466718718,
@@ -195,6 +209,146 @@
         "mps_eager": 119.10618241736668,
         "mps_cold_regional_compile": 96.78383770864457,
         "mlx_preconverted": 76.49953033216298
+      }
+    },
+    "roformer_229_18s_warm_steady_state": {
+      "method": "KimとKaraokeを各fresh processでloadし、同じ229.18秒入力を1回warm-up後、同一Separator / model instanceでpublic separate()を3回実行した中央値。loadは除外し、decodeとWAV書き出しを含む。2モデルとも同じ原音を直接入力した中央値の算術和で、製品chainではない。",
+      "lifecycle_scope": "各Roformer modelを別processで個別に常駐させ、同一入力shapeで繰り返す場合の定常性能。現製品はrun()呼び出しごとにSeparatorを新規作成しuse_torch_compileも渡していないため、製品の2曲目以降そのものではない。",
+      "execution_order": [
+        "mps_regional_compile_kim",
+        "mlx_preconverted_kim",
+        "mps_eager_kim",
+        "mps_eager_karaoke",
+        "mlx_preconverted_karaoke",
+        "mps_regional_compile_karaoke"
+      ],
+      "mps_compile_cache": "KimとKaraokeのprocess開始前に、それぞれ固有のempty TORCHINDUCTOR_CACHE_DIRを用意。両raw結果でis_native_mps_fp16=true、is_torch_compiled=trueを確認。",
+      "models": {
+        "mps_eager": {
+          "kim": {
+            "load_seconds": 1.7527007078751922,
+            "warmup_seconds": 58.6757179168053,
+            "runs_seconds": [57.94745049998164, 57.857854624744505, 57.98584120767191],
+            "median_seconds": 57.94745049998164,
+            "min_seconds": 57.857854624744505,
+            "max_seconds": 57.98584120767191,
+            "process_peak_rss_bytes": 2229551104,
+            "effective_backend_settings": {
+              "is_native_mps_fp16": true,
+              "is_torch_compiled": false
+            },
+            "output_validation_valid": true
+          },
+          "karaoke": {
+            "load_seconds": 1.6136622498743236,
+            "warmup_seconds": 58.314039000310004,
+            "runs_seconds": [57.962255583144724, 58.000178332906216, 57.895526584237814],
+            "median_seconds": 57.962255583144724,
+            "min_seconds": 57.895526584237814,
+            "max_seconds": 58.000178332906216,
+            "process_peak_rss_bytes": 2229567488,
+            "effective_backend_settings": {
+              "is_native_mps_fp16": true,
+              "is_torch_compiled": false
+            },
+            "output_validation_valid": true
+          }
+        },
+        "mps_regional_compile": {
+          "kim": {
+            "load_seconds": 2.7115245829336345,
+            "warmup_seconds": 46.302653917111456,
+            "runs_seconds": [42.8020941670984, 42.56582000013441, 42.52988599985838],
+            "median_seconds": 42.56582000013441,
+            "min_seconds": 42.52988599985838,
+            "max_seconds": 42.8020941670984,
+            "process_peak_rss_bytes": 2227814400,
+            "effective_backend_settings": {
+              "is_native_mps_fp16": true,
+              "is_torch_compiled": true
+            },
+            "output_validation_valid": true
+          },
+          "karaoke": {
+            "load_seconds": 1.9086446249857545,
+            "warmup_seconds": 46.375785999931395,
+            "runs_seconds": [42.66696208436042, 42.78799191582948, 44.10415983386338],
+            "median_seconds": 42.78799191582948,
+            "min_seconds": 42.66696208436042,
+            "max_seconds": 44.10415983386338,
+            "process_peak_rss_bytes": 2229731328,
+            "effective_backend_settings": {
+              "is_native_mps_fp16": true,
+              "is_torch_compiled": true
+            },
+            "output_validation_valid": true
+          }
+        },
+        "mlx_preconverted": {
+          "kim": {
+            "load_seconds": 0.03516862541437149,
+            "warmup_seconds": 38.041003834456205,
+            "runs_seconds": [38.787616124842316, 38.58347883308306, 38.34175575012341],
+            "median_seconds": 38.58347883308306,
+            "min_seconds": 38.34175575012341,
+            "max_seconds": 38.787616124842316,
+            "process_peak_rss_bytes": 1635483648,
+            "effective_backend_settings": {
+              "speed_mode": "default",
+              "cache_clear_policy": "aggressive",
+              "write_workers": 1,
+              "mdxc_batch_size": 1
+            },
+            "output_validation_valid": true
+          },
+          "karaoke": {
+            "load_seconds": 0.032131750136613846,
+            "warmup_seconds": 37.8538703750819,
+            "runs_seconds": [37.802715708035976, 37.80204670783132, 38.54446500027552],
+            "median_seconds": 37.802715708035976,
+            "min_seconds": 37.80204670783132,
+            "max_seconds": 38.54446500027552,
+            "process_peak_rss_bytes": 1634533376,
+            "effective_backend_settings": {
+              "speed_mode": "default",
+              "cache_clear_policy": "aggressive",
+              "write_workers": 1,
+              "mdxc_batch_size": 1
+            },
+            "output_validation_valid": true
+          }
+        }
+      },
+      "median_sum_seconds": {
+        "mps_eager": 115.90970608312637,
+        "mps_regional_compile": 85.35381191596389,
+        "mlx_preconverted": 76.38619454111904
+      },
+      "arithmetic_range_sum_seconds": {
+        "mps_eager": [115.75338120898232, 115.98601954057813],
+        "mps_regional_compile": [85.1968480842188, 86.90625400096178],
+        "mlx_preconverted": [76.14380245795473, 77.33208112511784]
+      },
+      "load_sum_seconds": {
+        "mps_eager": 3.3663629577495158,
+        "mps_regional_compile": 4.620169207919389,
+        "mlx_preconverted": 0.06730037555098534
+      },
+      "warmup_sum_seconds": {
+        "mps_eager": 116.9897569171153,
+        "mps_regional_compile": 92.67843991704285,
+        "mlx_preconverted": 75.8948742095381
+      },
+      "comparisons": {
+        "mlx_vs_mps_eager_reduction_percent": 34.09853486615042,
+        "mlx_vs_mps_eager_speedup": 1.5174169466019365,
+        "mlx_vs_mps_compile_reduction_percent": 10.506405248395962,
+        "mlx_vs_mps_compile_speedup": 1.117398404629485,
+        "mps_compile_vs_mps_eager_reduction_percent": 26.36180799669086,
+        "mps_compile_vs_mps_eager_speedup": 1.3579909728841009,
+        "mps_compile_steady_vs_same_session_warmup_reduction_percent": 7.9032707149961645,
+        "mps_compile_steady_vs_same_session_warmup_speedup": 1.0858148902393547,
+        "warm_mps_compile_vs_cold_mps_compile_reduction_percent": 8.388022431685133
       }
     },
     "alternatives_34_44s": {
@@ -312,14 +466,15 @@
     "all_benchmark_outputs_decodable_and_finite": true,
     "all_compared_sample_rates_channels_and_shapes_equal": true,
     "demucs_th_and_safetensors_logical_state_bit_exact": true,
-    "unit_tests": "232 passed, 4 skipped, 4 warnings"
+    "unit_tests": "233 passed, 4 skipped, 4 warnings"
   },
   "limitations": [
     "M4 Pro 1台と少数音源だけの結果。",
     "fresh processをMPS, MLX, MLX, MPS, MPS, MLXのbalanced ABBAAB順で実行したが、順序自体はrandomizedせず、OS file cacheや温度を完全には統制していない。",
     "34.44秒の主比較は分離モデルの連鎖で、製品のpydub解析・overlay・m4a exportを含まない。",
-    "229.18秒と変換コストは各条件1回で分散を測っていない。",
-    "229.18秒のMPS compileはcold初回だけで、常駐processのwarm定常状態を測っていない。",
+    "229.18秒のcold比較と変換コストは各条件1回で分散を測っていない。warm定常比較は各modelを1回warm-up後に3回測定した。",
+    "229.18秒のwarm定常値は同一Separator / model instanceと同一入力shapeの反復であり、requestごとにSeparatorを作る現製品lifecycle、任意長の2曲目、製品chain、endpoint E2Eへはそのまま一般化できない。",
+    "229.18秒warm計測はバッテリー通常電力モードで実行し、Kimをcompile→MLX→eager、Karaokeをeager→MLX→compileの順に測った。OS file cache、温度、バッテリー残量を完全には統制していないが、終了時にthermal / performance warningはなかった。",
     "CPU fp32は数値基準であり、ground-truth stemではない。",
     "MLX strict chainは2回目のDeEcho loadをadapter側で省略している。省略しない結果も別途記録した。",
     "backend固有allocator値は意味が違うため比較せず、共通のprocess peak RSSだけを比較した。"
