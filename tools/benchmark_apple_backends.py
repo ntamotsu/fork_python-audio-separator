@@ -237,6 +237,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--repeatsは1以上にしてください。")
     if args.mlx_write_workers < 1 or args.mlx_demucs_batch_size < 1:
         parser.error("MLXのbatch sizeとwrite workersは1以上にしてください。")
+    if args.mode == "chain" and args.models:
+        parser.error("--modelはmodelsモードだけで指定できます。chainは製品相当の4モデルを固定で実行します。")
     if not args.audio_file.is_file():
         parser.error(f"音源が見つかりません: {args.audio_file}")
     if not args.model_dir.is_dir():

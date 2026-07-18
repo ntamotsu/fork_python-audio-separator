@@ -128,6 +128,28 @@ def test_map_named_outputs_rejects_incomplete_or_ambiguous_results(
         benchmark_apple_backends.map_named_outputs(tmp_path, names, output_files)
 
 
+def test_parse_args_rejects_model_filter_in_chain_mode(tmp_path, capsys):
+    audio_file = tmp_path / "input.wav"
+    sf.write(audio_file, np.zeros((32, 2), dtype=np.float32), 44_100)
+
+    with pytest.raises(SystemExit, match="2"):
+        benchmark_apple_backends.parse_args(
+            [
+                str(audio_file),
+                "--backend",
+                "mps",
+                "--mode",
+                "chain",
+                "--model",
+                "kim",
+                "--model-dir",
+                str(tmp_path),
+            ]
+        )
+
+    assert "--modelはmodelsモードだけで指定できます" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize(
     ("reuse", "expected_deecho_loads", "load_model_called", "reuse_strategy"),
     [(True, 1, False, "runner_skip"), (False, 2, True, None)],
