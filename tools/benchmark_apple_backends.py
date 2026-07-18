@@ -774,6 +774,13 @@ def json_safe(value: Any) -> Any:
 
 def effective_backend_settings(runtime: BackendRuntime, separator: Any) -> dict[str, Any]:
     """backendが初期化後に実際に使う主要設定を返す。"""
+    if runtime.name == "mps":
+        model_instance = getattr(separator, "model_instance", None)
+        return {
+            "is_native_mps_fp16": bool(getattr(model_instance, "is_native_mps_fp16", False)),
+            "is_torch_compiled": bool(getattr(model_instance, "is_torch_compiled", False)),
+        }
+
     if runtime.name != "mlx":
         return {}
 
@@ -863,6 +870,7 @@ def environment_report() -> dict[str, Any]:
                 "PYTORCH_ENABLE_MPS_FALLBACK",
                 "PYTORCH_MPS_HIGH_WATERMARK_RATIO",
                 "PYTORCH_MPS_LOW_WATERMARK_RATIO",
+                "TORCHINDUCTOR_CACHE_DIR",
             )
             if name in os.environ
         },

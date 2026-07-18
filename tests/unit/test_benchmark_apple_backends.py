@@ -235,7 +235,26 @@ def test_effective_mlx_settings_reports_profile_overrides():
         "write_workers": 2,
         "architecture_batch_sizes": {"Demucs": 8, "MDXC": 1, "VR": 1},
     }
-    assert benchmark_apple_backends.effective_backend_settings(FakeRuntime("mps"), separator) == {}
+    mps_separator = Mock(
+        model_instance=Mock(
+            is_native_mps_fp16=True,
+            is_torch_compiled=True,
+        )
+    )
+    assert benchmark_apple_backends.effective_backend_settings(FakeRuntime("mps"), mps_separator) == {
+        "is_native_mps_fp16": True,
+        "is_torch_compiled": True,
+    }
+    assert benchmark_apple_backends.effective_backend_settings(FakeRuntime("cpu"), separator) == {}
+
+
+def test_environment_report_includes_torchinductor_cache_dir(monkeypatch, tmp_path):
+    cache_dir = tmp_path / "inductor-cache"
+    monkeypatch.setenv("TORCHINDUCTOR_CACHE_DIR", str(cache_dir))
+
+    report = benchmark_apple_backends.environment_report()
+
+    assert report["environment"]["TORCHINDUCTOR_CACHE_DIR"] == str(cache_dir)
 
 
 def test_git_worktree_state_separates_tracked_and_untracked_changes(tmp_path):
