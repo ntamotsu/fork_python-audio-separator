@@ -208,7 +208,7 @@ class MDXCSeparator(CommonSeparator):
             )
             return
 
-        transformer_blocks = [transformer for layer in self.model_run.layers for transformer in layer]
+        transformer_blocks = self._regional_compile_targets()
         if not all(callable(getattr(transformer, "compile", None)) for transformer in transformer_blocks):
             self.logger.warning("Skipping regional torch.compile: this PyTorch build does not provide Module.compile().")
             return
@@ -216,14 +216,38 @@ class MDXCSeparator(CommonSeparator):
         try:
             for transformer in transformer_blocks:
                 transformer.compile()
-        except (AttributeError, RuntimeError) as exc:
-            for transformer in transformer_blocks:
-                transformer._compiled_call_impl = None
+        except Exception as exc:
+            self._disable_model_compilation()
             self.logger.warning(f"Regional torch.compile could not be enabled; continuing with eager inference: {exc}")
             return
 
         self.is_torch_compiled = True
         self.logger.info("Using regional torch.compile for MelBand RoFormer on MPS.")
+
+    def _regional_compile_targets(self):
+        """Return the repeated transformer blocks used by regional compilation."""
+        return [transformer for layer in self.model_run.layers for transformer in layer]
+
+    def _disable_model_compilation(self):
+        """Restore regional compile targets to their eager call implementations."""
+        for transformer in self._regional_compile_targets():
+            transformer._compiled_call_impl = None
+        self.is_torch_compiled = False
+
+    def _run_roformer_model(self, part):
+        """Run one RoFormer chunk and retry eagerly after a lazy compile failure."""
+        try:
+            return self.model_run(part.unsqueeze(0))[0]
+        except Exception as exc:
+            if not getattr(self, "is_torch_compiled", False):
+                raise
+
+            self._disable_model_compilation()
+            output = self.model_run(part.unsqueeze(0))[0]
+            self.logger.warning(
+                f"Regional torch.compile failed during inference; retried this chunk successfully and will continue in eager mode: {exc}"
+            )
+            return output
 
     def separate(self, audio_file_path, custom_output_names=None):
         """
@@ -460,7 +484,7 @@ class MDXCSeparator(CommonSeparator):
                     part = mix[:, start_idx : start_idx + chunk_size]
                     length = part.shape[-1]
                     part = part.to(device)
-                    x = self.model_run(part.unsqueeze(0))[0]
+                    x = self._run_roformer_model(part)
                     if x.device != accumulation_device:
                         x = x.to(accumulation_device)
                     _release_dml_memory_if_needed(device)

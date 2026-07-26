@@ -1,3 +1,4 @@
+import copy
 from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -210,3 +211,40 @@ def test_native_fp16_mps_forward_handles_silence(force_cpu_complex):
     assert torch.isfinite(output).all()
     assert torch.count_nonzero(output) == 0
     assert output.device.type == ("cpu" if force_cpu_complex else "mps")
+
+
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="MPS is not available")
+@pytest.mark.parametrize("force_cpu_complex", [False, True])
+def test_native_fp16_mps_forward_matches_cpu_fp32_for_non_silent_audio(force_cpu_complex):
+    cpu_model = _tiny_mel_band_roformer()
+    mps_model = copy.deepcopy(cpu_model)
+    separator = object.__new__(MDXCSeparator)
+    separator.logger = Mock()
+    separator.model_run = mps_model
+    separator.roformer_model_type = "mel_band_roformer"
+    separator.torch_device = torch.device("mps")
+    separator.use_autocast = True
+    separator.is_native_mps_fp16 = False
+    separator._configure_model_precision()
+    separator.model_run.to(separator.torch_device)
+
+    sample_indices = torch.arange(8192, dtype=torch.float32)
+    audio = (
+        0.35 * torch.sin(2 * torch.pi * 440 * sample_indices / 44100) + 0.15 * torch.sin(2 * torch.pi * 880 * sample_indices / 44100)
+    ).unsqueeze(0)
+
+    with torch.no_grad():
+        reference = cpu_model(audio)
+        with patch.object(mel_module, "should_fallback_to_cpu_for_complex_ops", return_value=force_cpu_complex):
+            output = separator.model_run(audio.to(separator.torch_device))
+
+    assert output.device.type == ("cpu" if force_cpu_complex else "mps")
+    output = output.cpu().float()
+    error = output - reference
+    snr = 20 * torch.log10(reference.square().mean().sqrt() / error.square().mean().sqrt())
+
+    assert output.shape == reference.shape
+    assert torch.isfinite(output).all()
+    assert reference.square().mean().sqrt().item() > 1e-4
+    assert snr.item() > 30
+    torch.testing.assert_close(output, reference, rtol=0.1, atol=1e-3)

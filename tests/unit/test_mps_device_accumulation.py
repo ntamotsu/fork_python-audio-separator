@@ -89,7 +89,18 @@ def test_mdxc_chunk_buffers_share_the_selected_accumulation_device(device_type):
 
     device = torch.device(device_type)
     separator = _mdxc_separator(device)
-    result = separator.demix(_mix(), override_model_segment_size=True)
+    allocated_devices = []
+    torch_zeros = torch.zeros
+
+    def tracked_zeros(*args, **kwargs):
+        tensor = torch_zeros(*args, **kwargs)
+        allocated_devices.append(tensor.device.type)
+        return tensor
+
+    with patch("audio_separator.separator.architectures.mdxc_separator.torch.zeros", side_effect=tracked_zeros):
+        result = separator.demix(_mix(), override_model_segment_size=True)
 
     assert set(result) == {"first", "second"}
     assert all(stem.shape == (2, 128) for stem in result.values())
+    assert allocated_devices
+    assert set(allocated_devices) == {device_type}

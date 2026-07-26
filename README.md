@@ -129,7 +129,13 @@ Apple Silicon MPS/CoreML is available in Torch and processor is ARM, setting Tor
 ONNXruntime has CoreMLExecutionProvider available, enabling acceleration
 ```
 
-PyTorch 2.13 is recommended for the best measured MPS performance. If the runtime probe finds an unsupported complex operation, inference automatically uses the compatible CPU fallback for that spectral work.
+PyTorch 2.13 is recommended for the best measured MPS performance on an M4 Pro with Python 3.12. Install it explicitly after installing audio-separator if your environment resolves an older compatible release:
+
+```sh
+pip install --upgrade "torch==2.13.*"
+```
+
+If the runtime probe finds an unsupported complex operation, inference automatically uses the compatible CPU fallback for that spectral work.
 
 **Model architecture status on Apple Silicon:**
 
@@ -146,7 +152,7 @@ Use `--use_autocast` to enable reduced-precision inference. On MPS, MelBand RoFo
 audio-separator path/to/audio.wav --use_autocast
 ```
 
-For long inputs or repeated runs with the same model, regional compilation can reduce warm inference time. It requires native float16 and is opt-in because the first inference includes compilation overhead; inputs shorter than about 60 seconds may be slower:
+For long inputs or repeated runs with the same model, regional compilation can reduce warm inference time. It requires native float16 and is opt-in because the first inference includes compilation overhead. On an M4 Pro with the tested Kim and Karaoke MelBand RoFormer models, inputs shorter than about 60 seconds may be slower; the crossover depends on the model and hardware:
 
 ```sh
 audio-separator path/to/long-audio.wav --use_autocast --use_torch_compile

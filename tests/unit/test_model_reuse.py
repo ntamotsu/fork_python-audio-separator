@@ -72,6 +72,52 @@ def test_load_model_reloads_different_model_without_poisoning_cache(separator):
     assert separator._loaded_model_filename == "first.ckpt"
 
 
+def test_successful_load_populates_cache_for_the_next_call(separator):
+    loaded_instance = object()
+    separator_class = MagicMock(return_value=loaded_instance)
+    architecture_module = SimpleNamespace(MDXCSeparator=separator_class)
+
+    with (
+        patch.object(
+            separator,
+            "download_model_files",
+            return_value=("model.ckpt", "MDXC", "Model", "/tmp/model.ckpt", None),
+        ) as download_model_files,
+        patch.object(separator, "load_model_data_using_hash", return_value={}),
+        patch("audio_separator.separator.separator.importlib.import_module", return_value=architecture_module),
+    ):
+        separator.load_model("model.ckpt")
+        separator.load_model("model.ckpt")
+
+    download_model_files.assert_called_once_with("model.ckpt")
+    separator_class.assert_called_once()
+    assert separator.model_instance is loaded_instance
+    assert separator._loaded_model_filename == "model.ckpt"
+
+
+def test_force_reload_repeats_a_successful_load(separator):
+    separator_class = MagicMock(side_effect=[object(), object()])
+    architecture_module = SimpleNamespace(MDXCSeparator=separator_class)
+
+    with (
+        patch.object(
+            separator,
+            "download_model_files",
+            return_value=("model.ckpt", "MDXC", "Model", "/tmp/model.ckpt", None),
+        ) as download_model_files,
+        patch.object(separator, "load_model_data_using_hash", return_value={}),
+        patch("audio_separator.separator.separator.importlib.import_module", return_value=architecture_module),
+    ):
+        separator.load_model("model.ckpt")
+        first_instance = separator.model_instance
+        separator.load_model("model.ckpt", force_reload=True)
+
+    assert download_model_files.call_count == 2
+    assert separator_class.call_count == 2
+    assert separator.model_instance is not first_instance
+    assert separator._loaded_model_filename == "model.ckpt"
+
+
 def test_load_model_preserves_multi_model_ensemble_behavior(separator):
     models = ["first.ckpt", "second.ckpt"]
 
@@ -112,9 +158,10 @@ def test_vr_model_reuses_loaded_torch_module():
     loaded_model = torch.nn.Linear(2, 2)
     separator = _make_vr_separator(loaded_model)
 
-    with patch("audio_separator.separator.architectures.vr_separator.nets.determine_model_capacity") as determine_model_capacity, patch(
-        "audio_separator.separator.architectures.vr_separator.torch.load"
-    ) as load_weights:
+    with (
+        patch("audio_separator.separator.architectures.vr_separator.nets.determine_model_capacity") as determine_model_capacity,
+        patch("audio_separator.separator.architectures.vr_separator.torch.load") as load_weights,
+    ):
         separator._ensure_model_loaded(31191)
 
     determine_model_capacity.assert_not_called()
@@ -127,13 +174,16 @@ def test_vr_model_loads_placeholder_once():
     loaded_model = MagicMock(spec=torch.nn.Module)
     state_dict = {"weight": torch.tensor([1.0])}
 
-    with patch(
-        "audio_separator.separator.architectures.vr_separator.nets.determine_model_capacity",
-        return_value=loaded_model,
-    ) as determine_model_capacity, patch(
-        "audio_separator.separator.architectures.vr_separator.torch.load",
-        return_value=state_dict,
-    ) as load_weights:
+    with (
+        patch(
+            "audio_separator.separator.architectures.vr_separator.nets.determine_model_capacity",
+            return_value=loaded_model,
+        ) as determine_model_capacity,
+        patch(
+            "audio_separator.separator.architectures.vr_separator.torch.load",
+            return_value=state_dict,
+        ) as load_weights,
+    ):
         separator._ensure_model_loaded(31191)
 
     determine_model_capacity.assert_called_once_with(256, 31191)
