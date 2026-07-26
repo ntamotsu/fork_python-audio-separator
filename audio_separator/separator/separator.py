@@ -249,6 +249,7 @@ class Separator:
         self.model_instance = None
         self.model_filename = None
         self.model_filenames = []
+        self._loaded_model_filename = None
 
         self.model_is_uvr_vip = False
         self.model_friendly_name = None
@@ -835,10 +836,17 @@ class Separator:
 
         return model_data
 
-    def load_model(self, model_filename="model_bs_roformer_ep_317_sdr_12.9755.ckpt"):
+    def load_model(self, model_filename="model_bs_roformer_ep_317_sdr_12.9755.ckpt", force_reload=False):
         """
         This method instantiates the architecture-specific separation class,
         loading the separation model into memory, downloading it first if necessary.
+
+        Consecutive calls with the same single model reuse the loaded instance. Set
+        ``force_reload`` to ``True`` after changing settings captured at load time.
+
+        Args:
+            model_filename (str or list): The model filename, or filenames for an ensemble.
+            force_reload (bool): Reload a matching single model instead of reusing it.
         """
         # If an ensemble preset was loaded and no explicit model list was provided, use preset models
         if self._ensemble_preset_models is not None and model_filename == "model_bs_roformer_ep_317_sdr_12.9755.ckpt":
@@ -854,6 +862,10 @@ class Separator:
 
         self.model_filename = model_filename
         self.model_filenames = [model_filename]
+
+        if not force_reload and self.model_instance is not None and self._loaded_model_filename == model_filename:
+            self.logger.info(f"Model {model_filename} is already loaded; reusing the existing instance.")
+            return
 
         self.logger.info(f"Loading model {model_filename}...")
 
@@ -929,6 +941,8 @@ class Separator:
                 raise RuntimeError(error_msg) from e
             else:
                 raise
+
+        self._loaded_model_filename = model_filename
 
         # Log Roformer implementation version if applicable
         if hasattr(self.model_instance, 'is_roformer_model') and self.model_instance.is_roformer_model:

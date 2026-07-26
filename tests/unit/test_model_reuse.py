@@ -1,0 +1,143 @@
+import logging
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+import pytest
+import torch
+
+from audio_separator.separator import Separator
+from audio_separator.separator.architectures.vr_separator import VRSeparator
+
+
+@pytest.fixture
+def separator(tmp_path):
+    return Separator(model_file_dir=tmp_path / "models", output_dir=tmp_path / "output", info_only=True)
+
+
+def test_load_model_reuses_matching_instance(separator):
+    loaded_instance = object()
+    separator.model_instance = loaded_instance
+    separator._loaded_model_filename = "model.ckpt"
+
+    with patch.object(separator, "download_model_files") as download_model_files:
+        separator.load_model("model.ckpt")
+
+    download_model_files.assert_not_called()
+    assert separator.model_instance is loaded_instance
+    assert separator.model_filename == "model.ckpt"
+    assert separator.model_filenames == ["model.ckpt"]
+
+
+def test_load_model_normalizes_single_item_list_before_reuse(separator):
+    separator.model_instance = object()
+    separator._loaded_model_filename = "model.ckpt"
+
+    with patch.object(separator, "download_model_files") as download_model_files:
+        separator.load_model(["model.ckpt"])
+
+    download_model_files.assert_not_called()
+    assert separator.model_filename == "model.ckpt"
+    assert separator.model_filenames == ["model.ckpt"]
+
+
+def test_load_model_force_reload_bypasses_reuse(separator):
+    separator.model_instance = object()
+    separator._loaded_model_filename = "model.ckpt"
+
+    with patch.object(separator, "download_model_files", side_effect=RuntimeError("reload attempted")) as download_model_files:
+        with pytest.raises(RuntimeError, match="reload attempted"):
+            separator.load_model("model.ckpt", force_reload=True)
+
+    download_model_files.assert_called_once_with("model.ckpt")
+
+
+def test_load_model_reloads_when_instance_is_missing(separator):
+    separator._loaded_model_filename = "model.ckpt"
+
+    with patch.object(separator, "download_model_files", side_effect=RuntimeError("reload attempted")):
+        with pytest.raises(RuntimeError, match="reload attempted"):
+            separator.load_model("model.ckpt")
+
+
+def test_load_model_reloads_different_model_without_poisoning_cache(separator):
+    loaded_instance = object()
+    separator.model_instance = loaded_instance
+    separator._loaded_model_filename = "first.ckpt"
+
+    with patch.object(separator, "download_model_files", side_effect=RuntimeError("load failed")):
+        with pytest.raises(RuntimeError, match="load failed"):
+            separator.load_model("second.ckpt")
+
+    assert separator.model_instance is loaded_instance
+    assert separator._loaded_model_filename == "first.ckpt"
+
+
+def test_load_model_preserves_multi_model_ensemble_behavior(separator):
+    models = ["first.ckpt", "second.ckpt"]
+
+    with patch.object(separator, "download_model_files") as download_model_files:
+        separator.load_model(models)
+
+    download_model_files.assert_not_called()
+    assert separator.model_filename == models
+    assert separator.model_filenames == models
+    assert separator.model_filename is not models
+
+
+def test_load_model_expands_ensemble_preset_before_reuse(separator):
+    preset_models = ["first.ckpt", "second.ckpt"]
+    separator._ensemble_preset_models = preset_models
+
+    with patch.object(separator, "download_model_files") as download_model_files:
+        separator.load_model()
+
+    download_model_files.assert_not_called()
+    assert separator.model_filename == preset_models
+    assert separator.model_filenames == preset_models
+
+
+def _make_vr_separator(model_run):
+    separator = object.__new__(VRSeparator)
+    separator.logger = logging.getLogger(__name__)
+    separator.model_run = model_run
+    separator.model_params = SimpleNamespace(param={"bins": 128})
+    separator.model_capacity = (32, 128)
+    separator.is_vr_51_model = False
+    separator.model_path = "/tmp/model.pth"
+    separator.torch_device = torch.device("cpu")
+    return separator
+
+
+def test_vr_model_reuses_loaded_torch_module():
+    loaded_model = torch.nn.Linear(2, 2)
+    separator = _make_vr_separator(loaded_model)
+
+    with patch("audio_separator.separator.architectures.vr_separator.nets.determine_model_capacity") as determine_model_capacity, patch(
+        "audio_separator.separator.architectures.vr_separator.torch.load"
+    ) as load_weights:
+        separator._ensure_model_loaded(31191)
+
+    determine_model_capacity.assert_not_called()
+    load_weights.assert_not_called()
+    assert separator.model_run is loaded_model
+
+
+def test_vr_model_loads_placeholder_once():
+    separator = _make_vr_separator(lambda: None)
+    loaded_model = MagicMock(spec=torch.nn.Module)
+    state_dict = {"weight": torch.tensor([1.0])}
+
+    with patch(
+        "audio_separator.separator.architectures.vr_separator.nets.determine_model_capacity",
+        return_value=loaded_model,
+    ) as determine_model_capacity, patch(
+        "audio_separator.separator.architectures.vr_separator.torch.load",
+        return_value=state_dict,
+    ) as load_weights:
+        separator._ensure_model_loaded(31191)
+
+    determine_model_capacity.assert_called_once_with(256, 31191)
+    load_weights.assert_called_once_with("/tmp/model.pth", map_location="cpu")
+    loaded_model.load_state_dict.assert_called_once_with(state_dict)
+    loaded_model.to.assert_called_once_with(torch.device("cpu"))
+    assert separator.model_run is loaded_model
