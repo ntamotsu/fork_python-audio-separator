@@ -47,3 +47,8 @@ def should_fallback_to_cpu_for_complex_ops(device: torch.device) -> bool:
 
     device_index = -1 if device.index is None else int(device.index)
     return not _supports_complex_spectral_ops(device.type, device_index)
+
+
+def should_accumulate_on_device(device: torch.device) -> bool:
+    """Keep full-track accumulators on MPS, where CPU and GPU share unified memory."""
+    return device.type == "mps"

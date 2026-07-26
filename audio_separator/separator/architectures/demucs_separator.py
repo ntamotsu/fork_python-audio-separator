@@ -8,6 +8,7 @@ from audio_separator.separator.uvr_lib_v5.demucs.apply import apply_model, demuc
 from audio_separator.separator.uvr_lib_v5.demucs.hdemucs import HDemucs
 from audio_separator.separator.uvr_lib_v5.demucs.pretrained import get_model as get_demucs_model
 from audio_separator.separator.uvr_lib_v5 import spec_utils
+from audio_separator.separator.uvr_lib_v5.device_utils import should_accumulate_on_device
 
 DEMUCS_4_SOURCE = ["drums", "bass", "other", "vocals"]
 
@@ -166,7 +167,8 @@ class DemucsSeparator(CommonSeparator):
         self.logger.debug("Starting demixing process in demix_demucs...")
 
         processed = {}
-        mix = torch.tensor(mix, dtype=torch.float32)
+        mix_device = self.torch_device if should_accumulate_on_device(self.torch_device) else torch.device("cpu")
+        mix = torch.tensor(mix, dtype=torch.float32, device=mix_device)
         ref = mix.mean(0)
         mix = (mix - ref.mean()) / ref.std()
         mix_infer = mix

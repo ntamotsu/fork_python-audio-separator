@@ -49,6 +49,14 @@ def test_fallback_decision_uses_cached_capability_probe(monkeypatch):
     probe.assert_called_once_with("mps", -1)
 
 
+@pytest.mark.parametrize(
+    ("device_type", "expected"),
+    [("cpu", False), ("cuda", False), ("privateuseone", False), ("mps", True)],
+)
+def test_device_accumulation_is_limited_to_mps(device_type, expected):
+    assert device_utils.should_accumulate_on_device(torch.device(device_type)) is expected
+
+
 def test_probe_rejects_a_device_without_complex_scatter_support():
     cpu_device = torch.device("cpu")
     with (

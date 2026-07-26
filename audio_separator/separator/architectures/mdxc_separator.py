@@ -10,6 +10,7 @@ from scipy import signal
 
 from audio_separator.separator.common_separator import CommonSeparator
 from audio_separator.separator.uvr_lib_v5 import spec_utils
+from audio_separator.separator.uvr_lib_v5.device_utils import should_accumulate_on_device
 from audio_separator.separator.uvr_lib_v5.tfc_tdf_v3 import TFC_TDF_net
 # Roformer direct constructors removed; loading handled via RoformerLoader in CommonSeparator.
 
@@ -387,16 +388,17 @@ class MDXCSeparator(CommonSeparator):
             step = chunk_size if desired_step <= 0 else min(desired_step, chunk_size)
             self.logger.debug(f"Step: {step} (desired={desired_step})")
 
-            # Create a weighting table and convert it to a PyTorch tensor
-            window = torch.tensor(signal.windows.hamming(chunk_size), dtype=torch.float32)
-
             device = next(self.model_run.parameters()).device
+            accumulation_device = device if should_accumulate_on_device(device) else torch.device("cpu")
+
+            # Keep overlap-add buffers next to the model on unified-memory MPS devices.
+            window = torch.tensor(signal.windows.hamming(chunk_size), dtype=torch.float32, device=accumulation_device)
 
 
             with torch.no_grad():
                 req_shape = (len(self.model_data_cfgdict.training.instruments),) + tuple(mix.shape)
-                result = torch.zeros(req_shape, dtype=torch.float32)
-                counter = torch.zeros(req_shape, dtype=torch.float32)
+                result = torch.zeros(req_shape, dtype=torch.float32, device=accumulation_device)
+                counter = torch.zeros(req_shape, dtype=torch.float32, device=accumulation_device)
 
                 chunk_starts = self._roformer_chunk_starts(mix.shape[1], chunk_size, step)
                 for start_idx in tqdm(chunk_starts):
@@ -404,9 +406,9 @@ class MDXCSeparator(CommonSeparator):
                     length = part.shape[-1]
                     part = part.to(device)
                     x = self.model_run(part.unsqueeze(0))[0]
-                    x = x.cpu()
+                    if x.device != accumulation_device:
+                        x = x.to(accumulation_device)
                     _release_dml_memory_if_needed(device)
-                    # Perform overlap-add on CPU.
                     result = self.overlap_add(result, x, window, start_idx, length)
                     safe_len = min(length, x.shape[-1], window.shape[0])
                     if safe_len > 0:
@@ -415,7 +417,8 @@ class MDXCSeparator(CommonSeparator):
             inferenced_outputs = result / counter.clamp(min=1e-10)
 
         else:
-            mix = torch.tensor(mix, dtype=torch.float32)
+            accumulation_device = self.torch_device if should_accumulate_on_device(self.torch_device) else torch.device("cpu")
+            mix = torch.tensor(mix, dtype=torch.float32, device=accumulation_device)
 
             try:
                 num_stems = self.model_run.num_target_instruments
@@ -440,7 +443,14 @@ class MDXCSeparator(CommonSeparator):
             pad_size = hop_size - (mix_shape - chunk_size) % hop_size
             self.logger.debug(f"Pad size: {pad_size}")
 
-            mix = torch.cat([torch.zeros(2, chunk_size - hop_size), mix, torch.zeros(2, pad_size + chunk_size - hop_size)], 1)
+            mix = torch.cat(
+                [
+                    torch.zeros(2, chunk_size - hop_size, device=accumulation_device),
+                    mix,
+                    torch.zeros(2, pad_size + chunk_size - hop_size, device=accumulation_device),
+                ],
+                1,
+            )
             self.logger.debug(f"Mix shape: {mix.shape}")
 
             chunks = mix.unfold(1, chunk_size, hop_size).transpose(0, 1)
@@ -452,7 +462,9 @@ class MDXCSeparator(CommonSeparator):
             # accumulated_outputs is used to accumulate the output from processing each batch of chunks through the model.
             # It starts as a tensor of zeros and is updated in-place as the model processes each batch.
             # The variable holds the combined result of all processed batches, which, after post-processing, represents the separated audio sources.
-            accumulated_outputs = torch.zeros(num_stems, *mix.shape) if num_stems > 1 else torch.zeros_like(mix)
+            accumulated_outputs = (
+                torch.zeros(num_stems, *mix.shape, device=accumulation_device) if num_stems > 1 else torch.zeros_like(mix)
+            )
 
             with torch.no_grad():
                 count = 0
@@ -465,9 +477,9 @@ class MDXCSeparator(CommonSeparator):
                     # Since single_batch_result can contain multiple output tensors (one for each piece of audio in the batch),
                     # individual_output is used to iterate through these tensors and accumulate them into accumulated_outputs.
                     for individual_output in single_batch_result:
-                        individual_output_cpu = individual_output.cpu()
-                        # Accumulate outputs on CPU
-                        accumulated_outputs[..., count * hop_size : count * hop_size + chunk_size] += individual_output_cpu
+                        if individual_output.device != accumulation_device:
+                            individual_output = individual_output.to(accumulation_device)
+                        accumulated_outputs[..., count * hop_size : count * hop_size + chunk_size] += individual_output
                         count += 1
 
                     del single_batch_result
