@@ -73,7 +73,8 @@ class Separator:
         invert_using_spec (bool): Flag to invert using spectrogram.
         sample_rate (int): The sample rate of the audio.
         use_soundfile (bool): Use soundfile for audio writing, can solve OOM issues.
-        use_autocast (bool): Flag to use PyTorch autocast for faster inference.
+        use_autocast (bool): Use reduced-precision inference. MelBand RoFormer uses native float16 on MPS.
+        use_torch_compile (bool): Compile repeated MelBand RoFormer blocks on MPS native float16.
 
     MDX Architecture Specific Attributes:
         hop_length (int): The hop length for STFT.
@@ -130,6 +131,7 @@ class Separator:
         ensemble_weights=None,
         ensemble_preset=None,
         info_only=False,
+        use_torch_compile=False,
     ):
         """Initialize the separator."""
         self.logger = logging.getLogger(__name__)
@@ -211,6 +213,7 @@ class Separator:
 
         self.use_soundfile = use_soundfile
         self.use_autocast = use_autocast
+        self.use_torch_compile = use_torch_compile
         self.use_directml = use_directml
 
         self.chunk_duration = chunk_duration
@@ -904,6 +907,7 @@ class Separator:
             "sample_rate": self.sample_rate,
             "use_soundfile": self.use_soundfile,
             "use_autocast": self.use_autocast,
+            "use_torch_compile": self.use_torch_compile,
         }
 
         # Instantiate the appropriate separator class depending on the model type

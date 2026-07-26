@@ -154,6 +154,7 @@ class MDXCSeparator(CommonSeparator):
                     self.roformer_model_type = getattr(result, "model_info", {}).get("model_type")
                     self._configure_model_precision()
                     self.model_run.to(self.torch_device).eval()
+                    self._configure_model_compilation()
                 else:
                     error_msg = getattr(result, "error_message", "RoformerLoader unsuccessful")
                     self.logger.error(f"Failed to load Roformer model: {error_msg}")
@@ -195,6 +196,32 @@ class MDXCSeparator(CommonSeparator):
             rotary_embedding.cached_freqs = None
 
         self.logger.info("Using native float16 for MelBand RoFormer on MPS.")
+
+    def _configure_model_compilation(self):
+        """Compile repeated MelBand transformer blocks when the opt-in path is supported."""
+        self.is_torch_compiled = False
+        if not self.use_torch_compile:
+            return
+        if not self.is_native_mps_fp16:
+            self.logger.warning(
+                "Skipping regional torch.compile: it requires MPS, use_autocast=True, and a MelBand RoFormer model."
+            )
+            return
+
+        transformer_blocks = [transformer for layer in self.model_run.layers for transformer in layer]
+        if not all(callable(getattr(transformer, "compile", None)) for transformer in transformer_blocks):
+            self.logger.warning("Skipping regional torch.compile: this PyTorch build does not provide Module.compile().")
+            return
+
+        try:
+            for transformer in transformer_blocks:
+                transformer.compile()
+        except (AttributeError, RuntimeError) as exc:
+            self.logger.warning(f"Regional torch.compile could not be enabled; continuing with eager inference: {exc}")
+            return
+
+        self.is_torch_compiled = True
+        self.logger.info("Using regional torch.compile for MelBand RoFormer on MPS.")
 
     def separate(self, audio_file_path, custom_output_names=None):
         """

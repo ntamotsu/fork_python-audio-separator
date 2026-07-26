@@ -107,6 +107,7 @@ def test_roformer_loads_on_cpu_only_before_native_mps_conversion(device, use_aut
     separator.model_path = "/tmp/model.ckpt"
     separator.torch_device = torch.device(device)
     separator.use_autocast = use_autocast
+    separator.use_torch_compile = False
     loaded_model = Mock()
     loaded_model.to.return_value = loaded_model
     separator.roformer_loader = Mock(
