@@ -36,6 +36,16 @@ class _FakeMDXCModel:
         return batch.unsqueeze(1).repeat(1, 2, 1, 1)
 
 
+class _FakeRoformerModel(torch.nn.Module):
+    def __init__(self, device: torch.device):
+        super().__init__()
+        self.anchor = torch.nn.Parameter(torch.zeros((), device=device))
+
+    def forward(self, batch):
+        assert batch.device == self.anchor.device
+        return batch.unsqueeze(1).repeat(1, 2, 1, 1)
+
+
 def _mdxc_separator(device: torch.device) -> MDXCSeparator:
     separator = object.__new__(MDXCSeparator)
     separator.logger = Mock()
@@ -52,6 +62,16 @@ def _mdxc_separator(device: torch.device) -> MDXCSeparator:
     separator.overlap = 2
     separator.batch_size = 1
     separator.is_primary_stem_main_target = False
+    return separator
+
+
+def _roformer_separator(device: torch.device) -> MDXCSeparator:
+    separator = _mdxc_separator(device)
+    separator.model_run = _FakeRoformerModel(device)
+    separator.model_data_cfgdict.model = SimpleNamespace(stft_hop_length=2)
+    separator.model_data_cfgdict.audio.sample_rate = 1
+    separator.is_roformer = True
+    separator.overlap = 8
     return separator
 
 
@@ -104,3 +124,36 @@ def test_mdxc_chunk_buffers_share_the_selected_accumulation_device(device_type):
     assert all(stem.shape == (2, 128) for stem in result.values())
     assert allocated_devices
     assert set(allocated_devices) == {device_type}
+
+
+@pytest.mark.parametrize("device_type", ["cpu", "mps"])
+def test_roformer_overlap_add_buffers_use_the_selected_accumulation_device(device_type):
+    if device_type == "mps" and not torch.backends.mps.is_available():
+        pytest.skip("MPS is not available")
+
+    separator = _roformer_separator(torch.device(device_type))
+    window_devices = []
+    zero_devices = []
+    torch_tensor = torch.tensor
+    torch_zeros = torch.zeros
+
+    def tracked_tensor(*args, **kwargs):
+        tensor = torch_tensor(*args, **kwargs)
+        if kwargs.get("device") is not None:
+            window_devices.append(tensor.device.type)
+        return tensor
+
+    def tracked_zeros(*args, **kwargs):
+        tensor = torch_zeros(*args, **kwargs)
+        zero_devices.append(tensor.device.type)
+        return tensor
+
+    with (
+        patch("audio_separator.separator.architectures.mdxc_separator.torch.tensor", side_effect=tracked_tensor),
+        patch("audio_separator.separator.architectures.mdxc_separator.torch.zeros", side_effect=tracked_zeros),
+    ):
+        result = separator.demix(_mix(), override_model_segment_size=True)
+
+    assert set(result) == {"first", "second"}
+    assert window_devices == [device_type]
+    assert zero_devices == [device_type, device_type]
