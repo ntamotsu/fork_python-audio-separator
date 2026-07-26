@@ -66,7 +66,8 @@ def main():
     )
     use_torch_compile_help = (
         "Compile repeated MelBand RoFormer blocks on MPS native float16 (default: %(default)s). "
-        "Requires --use_autocast and is best for audio longer than about 60 seconds. Example: --use_torch_compile"
+        "Requires --use_autocast. Best for long inputs or repeated same-shape runs; a fresh compiler cache can make "
+        "the first run slower. Example: --use_torch_compile"
     )
     use_directml_help = "Use DirectML for hardware-accelerated inference on Windows AMD/Intel GPUs (experimental; requires the 'dml' extra). Example: --use_directml"
     chunk_duration_help = "Split audio into chunks of this duration in seconds (default: %(default)s = no chunking). Useful for processing very long audio files on systems with limited memory. Recommended: 600 (10 minutes) for files >1 hour. Chunks are concatenated without overlap/crossfade. Example: --chunk_duration=600"

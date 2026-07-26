@@ -42,11 +42,16 @@ def _supports_complex_spectral_ops(device_type: str, device_index: int) -> bool:
 
 def should_fallback_to_cpu_for_complex_ops(device: torch.device) -> bool:
     """Return whether complex spectral operations should use the legacy CPU path."""
-    if os.environ.get("AUDIO_SEPARATOR_FORCE_CPU_COMPLEX"):
+    if os.environ.get("AUDIO_SEPARATOR_FORCE_CPU_COMPLEX") == "1":
         return True
 
     device_index = -1 if device.index is None else int(device.index)
     return not _supports_complex_spectral_ops(device.type, device_index)
+
+
+def should_fallback_to_cpu_for_demucs_mask(device: torch.device, cac: bool) -> bool:
+    """Keep non-CaC Demucs Wiener masking on CPU because the spectral probe does not cover it."""
+    return (device.type == "mps" and not cac) or should_fallback_to_cpu_for_complex_ops(device)
 
 
 def should_accumulate_on_device(device: torch.device) -> bool:

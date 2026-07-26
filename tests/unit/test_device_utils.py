@@ -41,6 +41,19 @@ def test_force_cpu_environment_flag_overrides_capability_probe(monkeypatch):
     probe.assert_not_called()
 
 
+@pytest.mark.parametrize("value", [None, "", "0", "false", "off"])
+def test_disabled_force_cpu_environment_values_use_capability_probe(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv("AUDIO_SEPARATOR_FORCE_CPU_COMPLEX", raising=False)
+    else:
+        monkeypatch.setenv("AUDIO_SEPARATOR_FORCE_CPU_COMPLEX", value)
+
+    with patch.object(device_utils, "_supports_complex_spectral_ops", return_value=True) as probe:
+        assert device_utils.should_fallback_to_cpu_for_complex_ops(torch.device("mps")) is False
+
+    probe.assert_called_once_with("mps", -1)
+
+
 def test_fallback_decision_uses_cached_capability_probe(monkeypatch):
     monkeypatch.delenv("AUDIO_SEPARATOR_FORCE_CPU_COMPLEX", raising=False)
     with patch.object(device_utils, "_supports_complex_spectral_ops", return_value=True) as probe:
@@ -55,6 +68,33 @@ def test_fallback_decision_uses_cached_capability_probe(monkeypatch):
 )
 def test_device_accumulation_is_limited_to_mps(device_type, expected):
     assert device_utils.should_accumulate_on_device(torch.device(device_type)) is expected
+
+
+@pytest.mark.parametrize(
+    ("device_type", "cac", "complex_fallback", "expected", "probe_called"),
+    [
+        ("mps", False, False, True, False),
+        ("mps", True, False, False, True),
+        ("mps", True, True, True, True),
+        ("cpu", False, False, False, True),
+        ("cuda", False, False, False, True),
+    ],
+)
+def test_demucs_mask_fallback_covers_non_cac_mps_wiener_path(
+    device_type,
+    cac,
+    complex_fallback,
+    expected,
+    probe_called,
+):
+    with patch.object(
+        device_utils,
+        "should_fallback_to_cpu_for_complex_ops",
+        return_value=complex_fallback,
+    ) as complex_probe:
+        assert device_utils.should_fallback_to_cpu_for_demucs_mask(torch.device(device_type), cac) is expected
+
+    assert complex_probe.called is probe_called
 
 
 def test_probe_rejects_a_device_without_complex_scatter_support():

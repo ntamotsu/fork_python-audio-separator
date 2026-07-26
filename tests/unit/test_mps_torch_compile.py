@@ -49,9 +49,23 @@ def test_disabled_regional_compile_is_silent():
     separator.logger.warning.assert_not_called()
 
 
+def test_regional_compile_requires_restorable_module_calls():
+    separator = _separator()
+    transformer = Mock(spec=["compile"])
+    separator.model_run.layers = [[transformer]]
+
+    separator._configure_model_compilation()
+
+    assert separator.is_torch_compiled is False
+    transformer.compile.assert_not_called()
+    separator.logger.warning.assert_called_once()
+
+
 def test_regional_compile_falls_back_to_eager_when_compilation_fails():
     separator = _separator()
     transformer_blocks = [transformer for layer in separator.model_run.layers for transformer in layer]
+    existing_call = Mock()
+    transformer_blocks[0]._compiled_call_impl = existing_call
     compile_calls = 0
 
     def compile_then_fail(module):
@@ -66,7 +80,39 @@ def test_regional_compile_falls_back_to_eager_when_compilation_fails():
         separator._configure_model_compilation()
 
     assert separator.is_torch_compiled is False
-    assert all(transformer._compiled_call_impl is None for transformer in transformer_blocks)
+    assert transformer_blocks[0]._compiled_call_impl is existing_call
+    assert transformer_blocks[1]._compiled_call_impl is None
+    separator.logger.warning.assert_called_once()
+
+
+def test_regional_compile_restores_original_calls_after_lazy_failure():
+    separator = _separator()
+    transformer_blocks = separator._regional_compile_targets()
+    original_calls = [Mock(), Mock()]
+    for transformer, original_call in zip(transformer_blocks, original_calls, strict=True):
+        transformer._compiled_call_impl = original_call
+
+    def install_compiled_call(module):
+        module._compiled_call_impl = Mock()
+
+    with patch.object(torch.nn.Module, "compile", autospec=True, side_effect=install_compiled_call):
+        separator._configure_model_compilation()
+
+    assert separator.is_torch_compiled is True
+    assert all(
+        transformer._compiled_call_impl is not original_call
+        for transformer, original_call in zip(transformer_blocks, original_calls, strict=True)
+    )
+
+    expected = torch.ones(1, 2, 8)
+    separator.model_run.side_effect = [RuntimeError("backend compilation failed"), (expected,)]
+
+    assert separator._run_roformer_model(torch.zeros(2, 8)) is expected
+    assert separator.is_torch_compiled is False
+    assert all(
+        transformer._compiled_call_impl is original_call
+        for transformer, original_call in zip(transformer_blocks, original_calls, strict=True)
+    )
     separator.logger.warning.assert_called_once()
 
 

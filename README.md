@@ -152,7 +152,7 @@ Use `--use_autocast` to enable reduced-precision inference. On MPS, MelBand RoFo
 audio-separator path/to/audio.wav --use_autocast
 ```
 
-For long inputs or repeated runs with the same model, regional compilation can reduce warm inference time. It requires native float16 and is opt-in because the first inference includes compilation overhead. On an M4 Pro with the tested Kim and Karaoke MelBand RoFormer models, inputs shorter than about 60 seconds may be slower; the crossover depends on the model and hardware:
+For long inputs or repeated runs with the same model and input shape, regional compilation can reduce warm inference time. It requires native float16 and remains opt-in because a fresh compiler cache adds substantial first-run overhead. On an M4 Pro with the tested Kim model, model load plus the first 15-second separation took 10.83 seconds with compilation versus 5.53 seconds in eager mode, while subsequent median separations took 3.11 seconds versus 4.15 seconds. The one-shot crossover was not measured directly and depends on the model, input shape, compiler-cache reuse, PyTorch version, and hardware:
 
 ```sh
 audio-separator path/to/long-audio.wav --use_autocast --use_torch_compile
@@ -529,7 +529,7 @@ Common Separation Parameters:
   --sample_rate SAMPLE_RATE                              Modify the sample rate of the output audio (default: 44100). Example: --sample_rate=44100
   --use_soundfile                                        Use soundfile to write audio output (default: False). Example: --use_soundfile
   --use_autocast                                         Use reduced-precision inference (default: False). MPS MelBand RoFormer uses native float16. Do not use for CPU inference. Example: --use_autocast
-  --use_torch_compile                                    Compile repeated MelBand RoFormer blocks on MPS native float16 (default: False). Requires --use_autocast and is best for audio longer than about 60 seconds. Example: --use_torch_compile
+  --use_torch_compile                                    Compile repeated MelBand RoFormer blocks on MPS native float16 (default: False). Requires --use_autocast. Best for long inputs or repeated same-shape runs; a fresh compiler cache can make the first run slower. Example: --use_torch_compile
   --use_directml                                         Use DirectML for hardware-accelerated inference on Windows AMD/Intel GPUs (experimental; requires the 'dml' extra). Example: --use_directml
   --custom_output_names CUSTOM_OUTPUT_NAMES              Custom names for all output files in JSON format (default: None). Example: --custom_output_names='{"Vocals": "vocals_output", "Drums": "drums_output"}'
 
@@ -689,7 +689,7 @@ You can also rename specific stems:
 - **`sample_rate`:** (Optional) Set the sample rate of the output audio. `Default: 44100`
 - **`use_soundfile`:** (Optional) Use soundfile for output writing, can solve OOM issues, especially on longer audio.
 - **`use_autocast`:** (Optional) Use reduced-precision inference. On MPS, MelBand RoFormer uses native float16 while numerically sensitive operations remain in float32. Do not use for CPU inference. `Default: False`
-- **`use_torch_compile`:** (Optional) Compile repeated MelBand RoFormer transformer blocks on MPS native float16. Requires `use_autocast=True`. Recommended for inputs longer than about 60 seconds or repeated warm inference because the first run includes compilation overhead. `Default: False`
+- **`use_torch_compile`:** (Optional) Compile repeated MelBand RoFormer transformer blocks on MPS native float16. Requires `use_autocast=True`. Recommended for long inputs or repeated same-shape warm inference. A fresh compiler cache can make the first run slower; the break-even depends on the model, input shape, cache state, PyTorch version, and hardware. `Default: False`
 - **`use_directml`:** (Optional) Flag to use DirectML for hardware-accelerated inference on Windows AMD/Intel GPUs (experimental; requires the `dml` extra and only takes effect when CUDA and Apple Silicon MPS are unavailable). `Default: False`
 - **`mdx_params`:** (Optional) MDX Architecture Specific Attributes & Defaults. `Default: {"hop_length": 1024, "segment_size": 256, "overlap": 0.25, "batch_size": 1, "enable_denoise": False}`
 - **`vr_params`:** (Optional) VR Architecture Specific Attributes & Defaults. `Default: {"batch_size": 1, "window_size": 512, "aggression": 5, "enable_tta": False, "enable_post_process": False, "post_process_threshold": 0.2, "high_end_process": False}`

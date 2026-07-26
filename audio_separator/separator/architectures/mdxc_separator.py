@@ -212,6 +212,15 @@ class MDXCSeparator(CommonSeparator):
         if not all(callable(getattr(transformer, "compile", None)) for transformer in transformer_blocks):
             self.logger.warning("Skipping regional torch.compile: this PyTorch build does not provide Module.compile().")
             return
+        if not all(hasattr(transformer, "_compiled_call_impl") for transformer in transformer_blocks):
+            self.logger.warning(
+                "Skipping regional torch.compile: this PyTorch build cannot safely restore eager module calls."
+            )
+            return
+
+        self._regional_compile_original_calls = [
+            (transformer, transformer._compiled_call_impl) for transformer in transformer_blocks
+        ]
 
         try:
             for transformer in transformer_blocks:
@@ -229,13 +238,20 @@ class MDXCSeparator(CommonSeparator):
         return [transformer for layer in self.model_run.layers for transformer in layer]
 
     def _disable_model_compilation(self):
-        """Restore regional compile targets to their eager call implementations."""
-        for transformer in self._regional_compile_targets():
-            transformer._compiled_call_impl = None
+        """Restore regional compile targets to their pre-compilation call implementations."""
+        original_calls = getattr(self, "_regional_compile_original_calls", None)
+        if original_calls is None:
+            original_calls = [
+                (transformer, None)
+                for transformer in self._regional_compile_targets()
+                if hasattr(transformer, "_compiled_call_impl")
+            ]
+        for transformer, original_call in original_calls:
+            transformer._compiled_call_impl = original_call
         self.is_torch_compiled = False
 
     def _run_roformer_model(self, part):
-        """Run one RoFormer chunk and retry eagerly after a lazy compile failure."""
+        """Run one RoFormer chunk and restore pre-compilation calls after a lazy compile failure."""
         try:
             return self.model_run(part.unsqueeze(0))[0]
         except Exception as exc:
@@ -245,7 +261,8 @@ class MDXCSeparator(CommonSeparator):
             self._disable_model_compilation()
             output = self.model_run(part.unsqueeze(0))[0]
             self.logger.warning(
-                f"Regional torch.compile failed during inference; retried this chunk successfully and will continue in eager mode: {exc}"
+                "Regional torch.compile failed during inference; retried this chunk successfully using the "
+                f"pre-compilation module calls: {exc}"
             )
             return output
 

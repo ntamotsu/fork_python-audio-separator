@@ -22,7 +22,7 @@ from .demucs import rescale_module
 from .states import capture_init
 from .spec import spectro, ispectro
 from .hdemucs import pad1d, ScaledEmbedding, HEncLayer, MultiWrap, HDecLayer
-from audio_separator.separator.uvr_lib_v5.device_utils import should_fallback_to_cpu_for_complex_ops
+from audio_separator.separator.uvr_lib_v5.device_utils import should_fallback_to_cpu_for_demucs_mask
 
 
 class HTDemucs(nn.Module):
@@ -583,8 +583,9 @@ class HTDemucs(nn.Module):
         x = x * std[:, None] + mean[:, None]
 
         original_device = x.device
-        should_fallback = should_fallback_to_cpu_for_complex_ops(original_device)
+        should_fallback = should_fallback_to_cpu_for_demucs_mask(original_device, self.cac)
         if should_fallback:
+            z = z.cpu()
             x = x.cpu()
 
         zout = self._mask(z, x)
