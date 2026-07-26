@@ -217,6 +217,8 @@ class MDXCSeparator(CommonSeparator):
             for transformer in transformer_blocks:
                 transformer.compile()
         except (AttributeError, RuntimeError) as exc:
+            for transformer in transformer_blocks:
+                transformer._compiled_call_impl = None
             self.logger.warning(f"Regional torch.compile could not be enabled; continuing with eager inference: {exc}")
             return
 
