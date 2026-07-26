@@ -25,7 +25,7 @@ The simplest (and probably most used) use case for this package is to separate a
   - [Installation 🛠️](#installation-%EF%B8%8F)
     - [🐳 Docker](#-docker)
     - [🎮 Nvidia GPU with CUDA or 🧪 Google Colab](#-nvidia-gpu-with-cuda-or--google-colab)
-    - [ Apple Silicon, macOS Sonoma+ with M1 or newer CPU (CoreML acceleration)](#-apple-silicon-macos-sonoma-with-m1-or-newer-cpu-coreml-acceleration)
+    - [ Apple Silicon, macOS Sonoma+ with M1 or newer (CoreML and MPS acceleration)](#-apple-silicon-macos-sonoma-with-m1-or-newer-coreml-and-mps-acceleration)
     - [🐢 No hardware acceleration, CPU only](#-no-hardware-acceleration-cpu-only)
     - [🪟 Windows AMD / Intel GPU with DirectML (experimental)](#-windows-amd--intel-gpu-with-directml-experimental)
     - [🎥 FFmpeg dependency](#-ffmpeg-dependency)
@@ -113,15 +113,46 @@ Docker:
 beveradb/audio-separator:gpu
 ```
 
-###  Apple Silicon, macOS Sonoma+ with M1 or newer CPU (CoreML acceleration)
+###  Apple Silicon, macOS Sonoma+ with M1 or newer (CoreML and MPS acceleration)
 
-💬 If successfully configured, you should see this log message when running `audio-separator --env_info`:
- `ONNXruntime has CoreMLExecutionProvider available, enabling acceleration`
+PyTorch models use the MPS device, while ONNX models use the CoreML execution provider when it is available.
 
 Pip:
 ```sh
 pip install "audio-separator[cpu]"
 ```
+
+💬 If successfully configured, `audio-separator --env_info` logs:
+
+```text
+Apple Silicon MPS/CoreML is available in Torch and processor is ARM, setting Torch device to MPS
+ONNXruntime has CoreMLExecutionProvider available, enabling acceleration
+```
+
+PyTorch 2.13 is recommended for the best measured MPS performance. If the runtime probe finds an unsupported complex operation, inference automatically uses the compatible CPU fallback for that spectral work.
+
+**Model architecture status on Apple Silicon:**
+
+| Architecture | Model types | Accelerator |
+|---|---|---|
+| MDX | `.onnx` | CoreML when the execution provider is available |
+| VR | `.pth` | PyTorch MPS |
+| Demucs | `.yaml` | PyTorch MPS; supported spectral operations stay on-device |
+| MDXC / RoFormer | `.ckpt` / `.yaml` | PyTorch MPS; supported spectral operations and overlap-add buffers stay on-device |
+
+Use `--use_autocast` to enable reduced-precision inference. On MPS, MelBand RoFormer models use native float16 while rotary frequencies, normalization, STFT, and ISTFT remain in float32:
+
+```sh
+audio-separator path/to/audio.wav --use_autocast
+```
+
+For long inputs or repeated runs with the same model, regional compilation can reduce warm inference time. It requires native float16 and is opt-in because the first inference includes compilation overhead; inputs shorter than about 60 seconds may be slower:
+
+```sh
+audio-separator path/to/long-audio.wav --use_autocast --use_torch_compile
+```
+
+Set `AUDIO_SEPARATOR_FORCE_CPU_COMPLEX=1` to force the legacy CPU path for complex spectral operations when diagnosing an MPS compatibility issue.
 
 ### 🐢 No hardware acceleration, CPU only
 
@@ -450,7 +481,7 @@ Presets are defined in `audio_separator/ensemble_presets.json` — contributions
 ```sh
 usage: audio-separator [-h] [-v] [-d] [-e] [-l] [--log_level LOG_LEVEL] [--list_filter LIST_FILTER] [--list_limit LIST_LIMIT] [--list_format {pretty,json}] [-m MODEL_FILENAME] [--output_format OUTPUT_FORMAT]
                        [--output_bitrate OUTPUT_BITRATE] [--output_dir OUTPUT_DIR] [--model_file_dir MODEL_FILE_DIR] [--download_model_only] [--invert_spect] [--normalization NORMALIZATION]
-                       [--amplification AMPLIFICATION] [--single_stem SINGLE_STEM] [--sample_rate SAMPLE_RATE] [--use_soundfile] [--use_autocast] [--use_directml] [--custom_output_names CUSTOM_OUTPUT_NAMES]
+                       [--amplification AMPLIFICATION] [--single_stem SINGLE_STEM] [--sample_rate SAMPLE_RATE] [--use_soundfile] [--use_autocast] [--use_torch_compile] [--use_directml] [--custom_output_names CUSTOM_OUTPUT_NAMES]
                        [--mdx_segment_size MDX_SEGMENT_SIZE] [--mdx_overlap MDX_OVERLAP] [--mdx_batch_size MDX_BATCH_SIZE] [--mdx_hop_length MDX_HOP_LENGTH] [--mdx_enable_denoise] [--vr_batch_size VR_BATCH_SIZE]
                        [--vr_window_size VR_WINDOW_SIZE] [--vr_aggression VR_AGGRESSION] [--vr_enable_tta] [--vr_high_end_process] [--vr_enable_post_process]
                        [--vr_post_process_threshold VR_POST_PROCESS_THRESHOLD] [--demucs_segment_size DEMUCS_SEGMENT_SIZE] [--demucs_shifts DEMUCS_SHIFTS] [--demucs_overlap DEMUCS_OVERLAP]
@@ -491,7 +522,8 @@ Common Separation Parameters:
   --single_stem SINGLE_STEM                              Output only single stem, e.g. Instrumental, Vocals, Drums, Bass, Guitar, Piano, Other. Example: --single_stem=Instrumental
   --sample_rate SAMPLE_RATE                              Modify the sample rate of the output audio (default: 44100). Example: --sample_rate=44100
   --use_soundfile                                        Use soundfile to write audio output (default: False). Example: --use_soundfile
-  --use_autocast                                         Use PyTorch autocast for faster inference (default: False). Do not use for CPU inference. Example: --use_autocast
+  --use_autocast                                         Use reduced-precision inference (default: False). MPS MelBand RoFormer uses native float16. Do not use for CPU inference. Example: --use_autocast
+  --use_torch_compile                                    Compile repeated MelBand RoFormer blocks on MPS native float16 (default: False). Requires --use_autocast and is best for audio longer than about 60 seconds. Example: --use_torch_compile
   --use_directml                                         Use DirectML for hardware-accelerated inference on Windows AMD/Intel GPUs (experimental; requires the 'dml' extra). Example: --use_directml
   --custom_output_names CUSTOM_OUTPUT_NAMES              Custom names for all output files in JSON format (default: None). Example: --custom_output_names='{"Vocals": "vocals_output", "Drums": "drums_output"}'
 
@@ -549,6 +581,8 @@ print(f"Separation complete! Output file(s): {' '.join(output_files)}")
 You can process multiple files without reloading the model to save time and memory.
 
 You only need to load a model when choosing or changing models. See example below:
+
+Consecutive calls to `load_model()` with the same single model filename reuse the loaded instance. Call `load_model(..., force_reload=True)` after changing settings that are captured when the model is loaded. Multi-model ensembles keep their existing loading behavior.
 
 ```python
 from audio_separator.separator import Separator
@@ -648,7 +682,8 @@ You can also rename specific stems:
 - **`invert_using_spec`:** (Optional) Flag to invert using spectrogram. `Default: False`
 - **`sample_rate`:** (Optional) Set the sample rate of the output audio. `Default: 44100`
 - **`use_soundfile`:** (Optional) Use soundfile for output writing, can solve OOM issues, especially on longer audio.
-- **`use_autocast`:** (Optional) Flag to use PyTorch autocast for faster inference. Do not use for CPU inference. `Default: False`
+- **`use_autocast`:** (Optional) Use reduced-precision inference. On MPS, MelBand RoFormer uses native float16 while numerically sensitive operations remain in float32. Do not use for CPU inference. `Default: False`
+- **`use_torch_compile`:** (Optional) Compile repeated MelBand RoFormer transformer blocks on MPS native float16. Requires `use_autocast=True`. Recommended for inputs longer than about 60 seconds or repeated warm inference because the first run includes compilation overhead. `Default: False`
 - **`use_directml`:** (Optional) Flag to use DirectML for hardware-accelerated inference on Windows AMD/Intel GPUs (experimental; requires the `dml` extra and only takes effect when CUDA and Apple Silicon MPS are unavailable). `Default: False`
 - **`mdx_params`:** (Optional) MDX Architecture Specific Attributes & Defaults. `Default: {"hop_length": 1024, "segment_size": 256, "overlap": 0.25, "batch_size": 1, "enable_denoise": False}`
 - **`vr_params`:** (Optional) VR Architecture Specific Attributes & Defaults. `Default: {"batch_size": 1, "window_size": 512, "aggression": 5, "enable_tta": False, "enable_post_process": False, "post_process_threshold": 0.2, "high_end_process": False}`
