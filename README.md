@@ -152,7 +152,7 @@ Use `--use_autocast` to enable reduced-precision inference. On MPS, MelBand RoFo
 audio-separator path/to/audio.wav --use_autocast
 ```
 
-For long inputs or repeated runs with the same model and input shape, regional compilation can reduce warm inference time. It requires native float16 and remains opt-in because a fresh compiler cache adds substantial first-run overhead. On an M4 Pro with the tested Kim model, model load plus the first 15-second separation took 10.83 seconds with compilation versus 5.53 seconds in eager mode, while subsequent median separations took 3.11 seconds versus 4.15 seconds. The one-shot crossover was not measured directly and depends on the model, input shape, compiler-cache reuse, PyTorch version, and hardware:
+For long inputs or repeated runs with the same model and input shape, regional compilation can reduce warm inference time. It requires native float16 and remains opt-in because a fresh compiler cache adds substantial first-run overhead. On an M4 Pro with the tested Kim model, model load plus the first 15-second separation took 10.87 seconds with compilation versus 5.55 seconds in eager mode, while subsequent median separations took 3.03 seconds versus 4.15 seconds. The one-shot crossover was not measured directly and depends on the model, input shape, compiler-cache reuse, PyTorch version, and hardware:
 
 ```sh
 audio-separator path/to/long-audio.wav --use_autocast --use_torch_compile
