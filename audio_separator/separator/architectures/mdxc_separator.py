@@ -190,19 +190,15 @@ class MDXCSeparator(CommonSeparator):
         self.logger.debug(f"Preparing mix for input audio file {self.audio_file_path}...")
         mix = self.prepare_mix(self.audio_file_path)
 
-        # Check if audio is shorter than threshold
+        # Short inputs need the configured segment size, but this automatic
+        # override must not persist when the separator instance is reused.
         audio_duration_seconds = mix.shape[1] / self.sample_rate
-        if audio_duration_seconds < 10.0:
-            # Only change and warn if it wasn't already set by the user
-            if not self.override_model_segment_size:
-                self.override_model_segment_size = True
-                self.logger.warning(f"Audio duration ({audio_duration_seconds:.2f}s) is less than 10 seconds.")
-                self.logger.warning("Automatically enabling override_model_segment_size for better processing of short audio.")
+        override_model_segment_size = self._use_model_segment_override(audio_duration_seconds)
 
         self.logger.debug("Normalizing mix before demixing...")
         mix = spec_utils.normalize(wave=mix, max_peak=self.normalization_threshold, min_peak=self.amplification_threshold)
 
-        source = self.demix(mix=mix)
+        source = self.demix(mix=mix, override_model_segment_size=override_model_segment_size)
         self.logger.debug("Demixing completed.")
 
         output_files = []
@@ -281,6 +277,14 @@ class MDXCSeparator(CommonSeparator):
 
         return output_files
 
+    def _use_model_segment_override(self, audio_duration_seconds: float) -> bool:
+        """Resolve the segment-size override for one input without mutating the separator."""
+        is_short_audio = audio_duration_seconds < 10.0
+        if is_short_audio and not self.override_model_segment_size:
+            self.logger.warning(f"Audio duration ({audio_duration_seconds:.2f}s) is less than 10 seconds.")
+            self.logger.warning("Automatically enabling override_model_segment_size for better processing of short audio.")
+        return self.override_model_segment_size or is_short_audio
+
     def pitch_fix(self, source, sr_pitched, orig_mix):
         """
         Change the pitch of the source audio by a number of semitones.
@@ -308,16 +312,39 @@ class MDXCSeparator(CommonSeparator):
             result[..., start : start + safe_len] += x[..., :safe_len] * weights[:safe_len]
         return result
 
-    def demix(self, mix: np.ndarray) -> dict:
+    @staticmethod
+    def _roformer_chunk_starts(audio_length: int, chunk_size: int, step: int) -> list[int]:
+        """Return a chunk schedule that covers the input without repeating the tail chunk."""
+        if audio_length < 0:
+            raise ValueError("audio_length must be greater than or equal to 0.")
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be greater than 0.")
+        if step <= 0 or step > chunk_size:
+            raise ValueError("step must be greater than 0 and less than or equal to chunk_size.")
+
+        starts = []
+        for offset in range(0, audio_length, step):
+            if offset + chunk_size >= audio_length:
+                tail_start = max(audio_length - chunk_size, 0)
+                if not starts or starts[-1] != tail_start:
+                    starts.append(tail_start)
+                break
+            starts.append(offset)
+        return starts
+
+    def demix(self, mix: np.ndarray, override_model_segment_size: bool | None = None) -> dict:
         """
         Demixes the input mix into primary and secondary sources using the model and model data.
 
         Args:
             mix (np.ndarray): The mix to be demixed.
+            override_model_segment_size (bool | None): Segment-size override for this input.
         Returns:
             dict: A dictionary containing the demixed sources.
         """
         orig_mix = mix
+        if override_model_segment_size is None:
+            override_model_segment_size = self.override_model_segment_size
 
         if self.pitch_shift != 0:
             self.logger.debug(f"Shifting pitch by -{self.pitch_shift} semitones...")
@@ -328,7 +355,7 @@ class MDXCSeparator(CommonSeparator):
 
             mix = torch.tensor(mix, dtype=torch.float32)
 
-            if self.override_model_segment_size:
+            if override_model_segment_size:
                 mdx_segment_size = self.segment_size
                 self.logger.debug(f"Using configured segment size: {mdx_segment_size}")
             else:
@@ -371,29 +398,19 @@ class MDXCSeparator(CommonSeparator):
                 result = torch.zeros(req_shape, dtype=torch.float32)
                 counter = torch.zeros(req_shape, dtype=torch.float32)
 
-                for i in tqdm(range(0, mix.shape[1], step)):
-                    part = mix[:, i : i + chunk_size]
+                chunk_starts = self._roformer_chunk_starts(mix.shape[1], chunk_size, step)
+                for start_idx in tqdm(chunk_starts):
+                    part = mix[:, start_idx : start_idx + chunk_size]
                     length = part.shape[-1]
-                    if i + chunk_size > mix.shape[1]:
-                        part = mix[:, -chunk_size:]
-                        length = chunk_size
                     part = part.to(device)
                     x = self.model_run(part.unsqueeze(0))[0]
                     x = x.cpu()
                     _release_dml_memory_if_needed(device)
-                    # Perform overlap_add on CPU
-                    if i + chunk_size > mix.shape[1]:
-                        # Fixed to correctly add to the end of the tensor
-                        start_idx = result.shape[-1] - chunk_size
-                        result = self.overlap_add(result, x, window, start_idx, length)
-                        safe_len = min(length, x.shape[-1], window.shape[0])
-                        if safe_len > 0:
-                            counter[..., start_idx : start_idx + safe_len] += window[:safe_len]
-                    else:
-                        result = self.overlap_add(result, x, window, i, length)
-                        safe_len = min(length, x.shape[-1], window.shape[0])
-                        if safe_len > 0:
-                            counter[..., i : i + safe_len] += window[:safe_len]
+                    # Perform overlap-add on CPU.
+                    result = self.overlap_add(result, x, window, start_idx, length)
+                    safe_len = min(length, x.shape[-1], window.shape[0])
+                    if safe_len > 0:
+                        counter[..., start_idx : start_idx + safe_len] += window[:safe_len]
 
             inferenced_outputs = result / counter.clamp(min=1e-10)
 
@@ -406,7 +423,7 @@ class MDXCSeparator(CommonSeparator):
                 num_stems = self.model_run.module.num_target_instruments
             self.logger.debug(f"Number of stems: {num_stems}")
 
-            if self.override_model_segment_size:
+            if override_model_segment_size:
                 mdx_segment_size = self.segment_size
                 self.logger.debug(f"Using configured segment size: {mdx_segment_size}")
             else:
