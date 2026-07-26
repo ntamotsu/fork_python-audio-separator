@@ -903,6 +903,7 @@ class Separator:
             "invert_using_spec": self.invert_using_spec,
             "sample_rate": self.sample_rate,
             "use_soundfile": self.use_soundfile,
+            "use_autocast": self.use_autocast,
         }
 
         # Instantiate the appropriate separator class depending on the model type
@@ -1041,14 +1042,18 @@ class Separator:
         self.logger.debug(f"Normalization threshold set to {self.normalization_threshold}, waveform will be lowered to this max amplitude to avoid clipping.")
         self.logger.debug(f"Amplification threshold set to {self.amplification_threshold}, waveform will be scaled up to this max amplitude if below it.")
 
-        # Run separation method for the loaded model with autocast enabled if supported by the device
+        # Run separation with the requested reduced-precision mode when supported.
         output_files = None
-        if self.use_autocast and autocast_mode.is_autocast_available(self.torch_device.type):
+        native_mps_fp16 = getattr(self.model_instance, "is_native_mps_fp16", False)
+        if native_mps_fp16:
+            self.logger.debug("Using native float16 inference for MelBand RoFormer on MPS.")
+            output_files = self.model_instance.separate(audio_file_path, custom_output_names)
+        elif self.use_autocast and autocast_mode.is_autocast_available(self.torch_device.type):
             self.logger.debug("Autocast available.")
             with autocast_mode.autocast(self.torch_device.type):
                 output_files = self.model_instance.separate(audio_file_path, custom_output_names)
         else:
-            self.logger.debug("Autocast unavailable.")
+            self.logger.debug("Autocast unavailable." if self.use_autocast else "Autocast disabled.")
             output_files = self.model_instance.separate(audio_file_path, custom_output_names)
 
         # Clear GPU cache to free up memory

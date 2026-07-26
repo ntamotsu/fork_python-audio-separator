@@ -80,7 +80,11 @@ class RMSNorm(Module):
 
     def forward(self, x):
         x = x.to(self.gamma.device)
-        return F.normalize(x, dim=-1) * self.scale * self.gamma
+        if x.device.type == "mps" and x.dtype == torch.float16:
+            normalized = F.normalize(x.float(), dim=-1).to(x.dtype)
+        else:
+            normalized = F.normalize(x, dim=-1)
+        return normalized * self.scale * self.gamma
 
 
 class FeedForward(Module):
@@ -415,6 +419,8 @@ class MelBandRoformer(Module):
         x = stft_repr[batch_arange, self.freq_indices.cpu()] if x_is_mps else stft_repr[batch_arange, self.freq_indices]
 
         x = rearrange(x, "b f t c -> b t (f c)")
+        if original_device.type == "mps":
+            x = x.to(next(self.band_split.parameters()).dtype)
 
         x = self.band_split(x)
 
@@ -446,6 +452,8 @@ class MelBandRoformer(Module):
 
         stft_repr = rearrange(stft_repr, "b f t c -> b 1 f t c")
 
+        if original_device.type == "mps":
+            masks = masks.to(stft_repr.dtype)
         stft_repr = torch.view_as_complex(stft_repr)
         masks = torch.view_as_complex(masks)
 

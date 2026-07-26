@@ -4,6 +4,7 @@ import sys
 
 import torch
 import numpy as np
+from rotary_embedding_torch import RotaryEmbedding
 from tqdm import tqdm
 from ml_collections import ConfigDict
 from scipy import signal
@@ -141,14 +142,17 @@ class MDXCSeparator(CommonSeparator):
             if self.is_roformer:
                 # Use the RoformerLoader exclusively; no legacy fallback
                 self.logger.debug("Loading Roformer model via RoformerLoader...")
+                load_device = "cpu" if self.torch_device.type == "mps" and self.use_autocast else str(self.torch_device)
                 result = self.roformer_loader.load_model(
                     model_path=self.model_path,
                     config=self.model_data,
-                    device=str(self.torch_device),
+                    device=load_device,
                 )
 
                 if getattr(result, "success", False) and getattr(result, "model", None) is not None:
                     self.model_run = result.model
+                    self.roformer_model_type = getattr(result, "model_info", {}).get("model_type")
+                    self._configure_model_precision()
                     self.model_run.to(self.torch_device).eval()
                 else:
                     error_msg = getattr(result, "error_message", "RoformerLoader unsuccessful")
@@ -169,6 +173,28 @@ class MDXCSeparator(CommonSeparator):
             self.logger.error("An error occurred while loading the model file. This often occurs when the model file is corrupt or incomplete.")
             self.logger.error(f"Please try deleting the model file from {self.model_path} and run audio-separator again to re-download it.")
             sys.exit(1)
+
+    def _configure_model_precision(self):
+        """Use native float16 for MelBand RoFormer when MPS autocast is requested."""
+        is_mel_band_roformer = self.roformer_model_type == "mel_band_roformer" or (
+            self.roformer_model_type is None and self.model_run.__class__.__name__ == "MelBandRoformer"
+        )
+        self.is_native_mps_fp16 = self.use_autocast and self.torch_device.type == "mps" and is_mel_band_roformer
+        if not self.is_native_mps_fp16:
+            return
+
+        # Preserve full-precision rotary angles before converting the rest of the model.
+        rotary_frequencies = [
+            (module, module.freqs.detach().float().clone())
+            for module in self.model_run.modules()
+            if isinstance(module, RotaryEmbedding)
+        ]
+        self.model_run.half()
+        for rotary_embedding, frequencies in rotary_frequencies:
+            rotary_embedding.freqs.data = frequencies.to(rotary_embedding.freqs.device)
+            rotary_embedding.cached_freqs = None
+
+        self.logger.info("Using native float16 for MelBand RoFormer on MPS.")
 
     def separate(self, audio_file_path, custom_output_names=None):
         """

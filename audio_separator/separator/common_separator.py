@@ -83,6 +83,8 @@ class CommonSeparator:
         self.invert_using_spec = config.get("invert_using_spec")
         self.sample_rate = config.get("sample_rate")
         self.use_soundfile = config.get("use_soundfile")
+        self.use_autocast = config.get("use_autocast", False)
+        self.is_native_mps_fp16 = False
         
         # Roformer-specific loading support
         self.roformer_loader = None
