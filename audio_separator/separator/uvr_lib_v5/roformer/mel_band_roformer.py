@@ -17,6 +17,8 @@ from einops import rearrange, pack, unpack, reduce, repeat
 
 from librosa import filters
 
+from audio_separator.separator.uvr_lib_v5.device_utils import should_fallback_to_cpu_for_complex_ops
+
 
 
 def _is_dml_device(device) -> bool:
@@ -369,7 +371,8 @@ class MelBandRoformer(Module):
         """
 
         original_device = raw_audio.device
-        x_is_mps = True if original_device.type == "mps" else False
+        # Use the legacy CPU hop unless the current MPS runtime supports every required complex operation.
+        x_is_mps = original_device.type == "mps" and should_fallback_to_cpu_for_complex_ops(original_device)
         # torch-directml (privateuseone) has no complex tensor support, so all
         # complex ops (stft, view_as_complex, scatter over complex, complex
         # multiply, istft) hop to CPU; the transformer stack — the heavy
