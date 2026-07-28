@@ -10,6 +10,7 @@ import torch
 from pydub import AudioSegment
 import soundfile as sf
 from audio_separator.separator.uvr_lib_v5 import spec_utils
+from audio_separator.separator.execution_policy import FP32, resolve_execution_policy
 
 
 class CommonSeparator:
@@ -61,6 +62,7 @@ class CommonSeparator:
 
         # Inferencing device / acceleration config
         self.torch_device = config.get("torch_device")
+        self.requested_torch_device = self.torch_device
         self.torch_device_cpu = config.get("torch_device_cpu")
         self.torch_device_mps = config.get("torch_device_mps")
         self.onnx_execution_provider = config.get("onnx_execution_provider")
@@ -83,6 +85,15 @@ class CommonSeparator:
         self.invert_using_spec = config.get("invert_using_spec")
         self.sample_rate = config.get("sample_rate")
         self.use_soundfile = config.get("use_soundfile")
+        self.use_autocast = config.get("use_autocast", False)
+        self.use_native_fp16 = config.get("use_native_fp16", False)
+        self.use_torch_compile = config.get("use_torch_compile", False)
+        self.uses_pytorch_inference = True
+        self.is_native_fp16 = False
+        self.effective_precision = FP32
+        self.effective_torch_compile = False
+        self._should_torch_compile = False
+        self._execution_policy_resolved = False
         
         # Roformer-specific loading support
         self.roformer_loader = None
@@ -144,6 +155,24 @@ class CommonSeparator:
         self.secondary_stem_output_path = None
 
         self.cached_sources_map = {}
+
+    def resolve_execution_policy(self, model_family):
+        """Resolve the requested precision and compilation settings for this model."""
+        policy = resolve_execution_policy(
+            device=self.torch_device,
+            requested_device=self.requested_torch_device,
+            model_family=model_family,
+            use_autocast=self.use_autocast,
+            use_native_fp16=self.use_native_fp16,
+            use_torch_compile=self.use_torch_compile,
+            uses_pytorch_inference=getattr(self, "uses_pytorch_inference", True),
+            logger=self.logger,
+        )
+        self.effective_precision = policy.precision
+        self.effective_torch_compile = False
+        self._should_torch_compile = policy.use_torch_compile
+        self._execution_policy_resolved = True
+        return policy
 
     def secondary_stem(self, primary_stem: str):
         """Determines secondary stem name based on the primary stem name."""
