@@ -244,27 +244,124 @@ class ConfigurationNormalizer:
         Returns:
             Detected model type or None if cannot be determined
         """
-        # Check for BSRoformer-specific parameters
-        if 'freqs_per_bands' in config:
+        normalized = self._normalize_structure(copy.deepcopy(config), model_type="")
+        normalized = self._normalize_parameter_names(normalized)
+
+        has_bs_structure = 'freqs_per_bands' in normalized
+        has_mel_structure = 'num_bands' in normalized
+        if has_bs_structure and has_mel_structure:
+            raise ParameterValidationError.incompatible_parameters(
+                parameter_names=['num_bands', 'freqs_per_bands'],
+                issue_description='Configuration contains structural markers for both MelBand Roformer and BS-Roformer',
+                suggested_fix="Keep 'num_bands' for MelBand Roformer or 'freqs_per_bands' for BS-Roformer, but not both",
+                context='Roformer model type detection',
+            )
+
+        structural_type = None
+        structural_marker = None
+        if has_bs_structure:
+            structural_type = "bs_roformer"
+            structural_marker = "freqs_per_bands"
+        elif has_mel_structure:
+            structural_type = "mel_band_roformer"
+            structural_marker = "num_bands"
+
+        explicit_evidence = self._collect_explicit_model_type_evidence(config)
+
+        explicit_types = {model_type for _, model_type in explicit_evidence}
+        if len(explicit_types) > 1:
+            raise ParameterValidationError.incompatible_parameters(
+                parameter_names=[key for key, _ in explicit_evidence],
+                issue_description='Explicit model type fields describe different Roformer families',
+                suggested_fix='Use one consistent Roformer family in all explicit model type fields',
+                context='Roformer model type detection',
+            )
+
+        explicit_type = next(iter(explicit_types), None)
+        if structural_type is not None and explicit_type is not None and structural_type != explicit_type:
+            raise ParameterValidationError.incompatible_parameters(
+                parameter_names=[explicit_evidence[0][0], structural_marker],
+                issue_description='Explicit model type conflicts with the architecture-defining parameter',
+                suggested_fix='Make the explicit model type agree with the structural Roformer parameters',
+                context='Roformer model type detection',
+            )
+
+        return structural_type or explicit_type
+
+    def _collect_explicit_model_type_evidence(self, config: Dict[str, Any]) -> List[tuple]:
+        """Collect type hints before flattening can overwrite contradictory values."""
+        evidence = []
+        explicit_keys = ('model_type', 'type', 'architecture')
+
+        for key in explicit_keys:
+            explicit_type = self._detect_explicit_model_type(config.get(key))
+            if explicit_type is not None:
+                evidence.append((key, explicit_type))
+
+        for section_name in ('model', 'architecture', 'params'):
+            section = config.get(section_name)
+            if not isinstance(section, dict):
+                continue
+            for key in explicit_keys:
+                explicit_type = self._detect_explicit_model_type(section.get(key))
+                if explicit_type is not None:
+                    evidence.append((f'{section_name}.{key}', explicit_type))
+
+        return evidence
+
+    @staticmethod
+    def _detect_explicit_model_type(value: Any) -> Optional[str]:
+        """Return a Roformer family encoded in an explicit configuration field."""
+        if not isinstance(value, str):
+            return None
+
+        value_lower = value.lower()
+        if 'bs' in value_lower and 'roformer' in value_lower:
             return "bs_roformer"
-        
-        # Check for MelBandRoformer-specific parameters
-        if 'num_bands' in config or 'n_mels' in config or 'mel_bands' in config:
+        if 'mel' in value_lower and 'roformer' in value_lower:
             return "mel_band_roformer"
-        
-        # Check for model type hints in the config
-        model_type = config.get('model_type', config.get('type', config.get('architecture')))
-        if isinstance(model_type, str):
-            model_type_lower = model_type.lower()
-            if 'bs' in model_type_lower and 'roformer' in model_type_lower:
-                return "bs_roformer"
-            elif 'mel' in model_type_lower and 'roformer' in model_type_lower:
-                return "mel_band_roformer"
-            elif 'roformer' in model_type_lower:
-                # Default to BSRoformer if just "roformer"
-                return "bs_roformer"
-        
         return None
+
+    @staticmethod
+    def _file_basename(file_path: str) -> str:
+        """Return a lowercase basename for POSIX or Windows-style paths."""
+        return str(file_path).replace('\\', '/').rsplit('/', 1)[-1].lower()
+
+    def detect_model_type_from_filename(self, file_path: str) -> Optional[str]:
+        """Detect a Roformer family from explicit tokens in a checkpoint basename."""
+        filename = self._file_basename(file_path)
+        bs_tokens = ('bs_roformer', 'bs-roformer', 'bsroformer')
+        mel_tokens = (
+            'mel_band_roformer',
+            'mel-band-roformer',
+            'melband_roformer',
+            'melband-roformer',
+            'melbandroformer',
+            'mel_roformer',
+        )
+
+        has_bs_token = any(token in filename for token in bs_tokens)
+        has_mel_token = any(token in filename for token in mel_tokens)
+        if has_bs_token and has_mel_token:
+            raise ValueError(f"Checkpoint basename contains both BS and MelBand Roformer tokens: {filename}")
+        if has_bs_token:
+            return "bs_roformer"
+        if has_mel_token:
+            return "mel_band_roformer"
+        if 'roformer' in filename:
+            logger.warning(f"Generic 'roformer' detected in {filename}, defaulting to bs_roformer")
+            return "bs_roformer"
+        return None
+
+    def resolve_model_type(self, config: Dict[str, Any], file_path: str) -> str:
+        """Resolve one model family before family-specific defaults are applied."""
+        model_type = self.detect_model_type(config)
+        if model_type is None:
+            model_type = self.detect_model_type_from_filename(file_path)
+        if model_type is None:
+            model_type = "bs_roformer"
+            logger.warning(f"Could not detect model type from config or path {file_path}, defaulting to bs_roformer")
+        return model_type
     
     def normalize_from_file_path(self, 
                                 config: Dict[str, Any], 
@@ -283,18 +380,5 @@ class ConfigurationNormalizer:
         Returns:
             Normalized configuration
         """
-        # Try to detect model type from file path
-        file_path_lower = file_path.lower()
-        if 'bs' in file_path_lower and 'roformer' in file_path_lower:
-            model_type = "bs_roformer"
-        elif 'mel' in file_path_lower and 'roformer' in file_path_lower:
-            model_type = "mel_band_roformer"
-        else:
-            # Try to detect from config
-            model_type = self.detect_model_type(config)
-            if model_type is None:
-                # Default to BSRoformer
-                model_type = "bs_roformer"
-                logger.warning(f"Could not detect model type from config or path {file_path}, defaulting to bs_roformer")
-        
+        model_type = self.resolve_model_type(config, file_path)
         return self.normalize_config(config, model_type, apply_defaults, validate)
