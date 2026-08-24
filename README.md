@@ -645,6 +645,26 @@ separator.load_model(model_filename='UVR_MDXNET_KARA_2.onnx')
 output_files = separator.separate(['audio1.wav', 'audio2.wav', 'audio3.wav'])
 ```
 
+Single-file calls fail immediately if model output is invalid or an output file cannot be written. List and directory calls attempt every discoverable file, then raise `BatchSeparationError` if any input failed. The exception keeps files from fully successful inputs in `successful_files` and ordered `(input_path, exception)` pairs in `failures`:
+
+```python
+from audio_separator.separator import (
+    AudioExportError,
+    BatchSeparationError,
+    InvalidAudioDataError,
+)
+
+try:
+    output_files = separator.separate(['audio1.wav', 'audio2.wav'])
+except BatchSeparationError as error:
+    print(f"Completed files: {error.successful_files}")
+    for input_path, cause in error.failures:
+        print(f"{input_path}: {cause}")
+except (InvalidAudioDataError, AudioExportError) as error:
+    # These are raised directly for a single input file.
+    print(f"Separation failed: {error}")
+```
+
 You can also specify the path to a folder containing audio files instead of listing the full paths to each of them:
 ```python
 from audio_separator.separator import Separator

@@ -50,6 +50,28 @@ MODEL_BUCKET = os.environ.get("MODEL_BUCKET", "")
 PORT = int(os.environ.get("PORT", "8080"))
 
 
+def _format_remote_error(error):
+    """Preserve explicit backend causes without importing the deployed package."""
+    message = str(error)
+    pending = [error]
+    seen = set()
+    while pending:
+        current = pending.pop(0)
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if current is not error:
+            current_message = str(current)
+            if current_message and current_message not in message:
+                message = f"{message} (caused by: {current_message})"
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        failures = getattr(current, "failures", ())
+        failure_items = failures.items() if isinstance(failures, dict) else failures
+        pending.extend(failure for _path, failure in failure_items)
+    return message
+
+
 
 # Track model readiness
 models_ready = False
@@ -368,11 +390,12 @@ def separate_audio_sync(
         return {"task_id": task_id, "status": "completed", "files": all_output_files, "models_used": models_used}
 
     except Exception as e:
-        logger.error(f"Separation error: {e}")
+        error_message = _format_remote_error(e)
+        logger.error(f"Separation error: {error_message}")
         traceback.print_exc()
-        update_status("error", 0, error=str(e))
+        update_status("error", 0, error=error_message)
 
-        return {"task_id": task_id, "status": "error", "error": str(e), "models_used": models_used}
+        return {"task_id": task_id, "status": "error", "error": error_message, "models_used": models_used}
 
     finally:
         logger.info(f"[{task_id}] Separation finished, cleaning up local files")

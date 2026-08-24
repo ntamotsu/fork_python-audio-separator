@@ -46,6 +46,28 @@ import modal
 # Constants
 DEFAULT_MODEL_NAME = "default"  # Used when no model is specified
 
+
+def _format_remote_error(error):
+    """Preserve explicit backend causes without importing the image package."""
+    message = str(error)
+    pending = [error]
+    seen = set()
+    while pending:
+        current = pending.pop(0)
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if current is not error:
+            current_message = str(current)
+            if current_message and current_message not in message:
+                message = f"{message} (caused by: {current_message})"
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        failures = getattr(current, "failures", ())
+        failure_items = failures.items() if isinstance(failures, dict) else failures
+        pending.extend(failure for _path, failure in failure_items)
+    return message
+
 def generate_file_hash(filename: str) -> str:
     """Generate a short, stable hash for a filename to use in download URLs."""
     # Use SHA-256 hash of the filename, take first 16 characters for brevity
@@ -208,6 +230,8 @@ def separate_audio_function(
     models_used = []
     current_model_index = 0
     total_models = len(models)
+    output_dir = f"/storage/outputs/{task_id}"
+    completed_successfully = False
 
     def update_job_status(status: str, progress: int = 0, error: str = None, files: list = None):
         """Update job status in Modal Dict"""
@@ -238,7 +262,6 @@ def separate_audio_function(
         update_job_status("processing", 5)
 
         # Create output directory
-        output_dir = f"/storage/outputs/{task_id}"
         os.makedirs(output_dir, exist_ok=True)
 
         # Write uploaded file directly to output directory with original filename
@@ -341,41 +364,43 @@ def separate_audio_function(
         # Update status: completed
         update_job_status("completed", 100, files=all_output_files)
 
+        completed_successfully = True
         return {"task_id": task_id, "status": "completed", "files": all_output_files, "models_used": models_used, "original_filename": filename}
 
     except FileNotFoundError as e:
-        print(f"Input file not found: {str(e)}")
+        error_message = f"Input file not found: {_format_remote_error(e)}"
+        print(error_message)
         traceback.print_exc()
         try:
-            update_job_status("error", 0, error=f"Input file not found: {str(e)}")
+            update_job_status("error", 0, error=error_message)
         except Exception as status_error:
             print(f"WARNING: Failed to update job status: {status_error}")
-        return {"task_id": task_id, "status": "error", "error": f"Input file not found: {str(e)}", "models_used": models_used, "original_filename": filename}
+        return {"task_id": task_id, "status": "error", "error": error_message, "models_used": models_used, "original_filename": filename}
 
     except ValueError as e:
-        print(f"Invalid input or configuration: {str(e)}")
+        error_message = f"Invalid input: {_format_remote_error(e)}"
+        print(f"Invalid input or configuration: {_format_remote_error(e)}")
         traceback.print_exc()
         try:
-            update_job_status("error", 0, error=f"Invalid input: {str(e)}")
+            update_job_status("error", 0, error=error_message)
         except Exception as status_error:
             print(f"WARNING: Failed to update job status: {status_error}")
-        return {"task_id": task_id, "status": "error", "error": f"Invalid input: {str(e)}", "models_used": models_used, "original_filename": filename}
+        return {"task_id": task_id, "status": "error", "error": error_message, "models_used": models_used, "original_filename": filename}
 
     except Exception as e:
-        print(f"Unexpected error during separation: {str(e)}")
+        error_message = _format_remote_error(e)
+        print(f"Unexpected error during separation: {error_message}")
         traceback.print_exc()
         try:
-            update_job_status("error", 0, error=str(e))
+            update_job_status("error", 0, error=error_message)
         except Exception as status_error:
             print(f"WARNING: Failed to update job status: {status_error}")
 
-        # Clean up on error
-        if os.path.exists(input_file_path):
-            os.unlink(input_file_path)
-        if os.path.exists(output_dir):
-            shutil.rmtree(output_dir, ignore_errors=True)
+        return {"task_id": task_id, "status": "error", "error": error_message, "models_used": models_used, "original_filename": filename}
 
-        return {"task_id": task_id, "status": "error", "error": str(e), "models_used": models_used, "original_filename": filename}
+    finally:
+        if not completed_successfully and os.path.exists(output_dir):
+            shutil.rmtree(output_dir, ignore_errors=True)
 
 
 @app.function(image=image, timeout=300, volumes={"/storage": volume})

@@ -5,6 +5,13 @@ import logging
 from typing import List
 from pydub import AudioSegment
 
+from audio_separator.separator.audio_io import atomic_output_path
+
+
+def _pydub_export_format(extension):
+    output_format = extension.lstrip(".").lower() if extension else "wav"
+    return {"m4a": "mp4", "mka": "matroska"}.get(output_format, output_format)
+
 
 class AudioChunker:
     """
@@ -79,7 +86,10 @@ class AudioChunker:
             chunk_path = os.path.join(output_dir, chunk_filename)
 
             self.logger.debug(f"Exporting chunk {i + 1}/{num_chunks}: {start_ms / 1000:.1f}s - {end_ms / 1000:.1f}s to {chunk_path}")
-            chunk.export(chunk_path, format=ext.lstrip('.'))
+            export_handle = chunk.export(chunk_path, format=_pydub_export_format(ext))
+            close_export = getattr(export_handle, "close", None)
+            if callable(close_export):
+                close_export()
             chunk_paths.append(chunk_path)
 
         return chunk_paths
@@ -121,10 +131,14 @@ class AudioChunker:
 
         # Get output format from file extension
         _, ext = os.path.splitext(output_path)
-        output_format = ext.lstrip('.') if ext else 'wav'
+        output_format = _pydub_export_format(ext)
 
         self.logger.info(f"Exporting merged audio ({len(combined) / 1000:.1f}s) to {output_path}")
-        combined.export(output_path, format=output_format)
+        with atomic_output_path(output_path, "pydub") as temp_path:
+            export_handle = combined.export(temp_path, format=output_format)
+            close_export = getattr(export_handle, "close", None)
+            if callable(close_export):
+                close_export()
 
         return output_path
 

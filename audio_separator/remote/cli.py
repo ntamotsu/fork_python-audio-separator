@@ -213,7 +213,8 @@ def main():
 
     # Handle commands
     if args.command == "separate":
-        handle_separate_command(args, api_client, logger, gcs_bucket)
+        if not handle_separate_command(args, api_client, logger, gcs_bucket):
+            sys.exit(1)
     elif args.command == "status":
         handle_status_command(args, api_client, logger)
     elif args.command == "models":
@@ -227,6 +228,7 @@ def main():
 
 def handle_separate_command(args, api_client: AudioSeparatorAPIClient, logger: logging.Logger, gcs_bucket: str):
     """Handle the separate command."""
+    all_succeeded = True
     for audio_file in args.audio_files:
         logger.info(f"Processing '{audio_file}'...")
 
@@ -238,6 +240,7 @@ def handle_separate_command(args, api_client: AudioSeparatorAPIClient, logger: l
             use_gcs = file_size > GCS_UPLOAD_THRESHOLD_BYTES
         except OSError as e:
             logger.error(f"❌ Cannot read '{audio_file}': {e}")
+            all_succeeded = False
             continue
 
         try:
@@ -303,20 +306,29 @@ def handle_separate_command(args, api_client: AudioSeparatorAPIClient, logger: l
             result = api_client.separate_audio_and_wait(**kwargs)
 
             if result["status"] == "completed":
-                if "downloaded_files" in result:
-                    logger.info(f"✅ Separation completed! Downloaded {len(result['downloaded_files'])} files:")
-                    for file_path in result["downloaded_files"]:
+                downloaded_files = result.get("downloaded_files", [])
+                expected_files = result.get("files")
+                if not downloaded_files or (expected_files is not None and len(downloaded_files) != len(expected_files)):
+                    logger.error("❌ Separation completed remotely, but one or more output files were not downloaded")
+                    all_succeeded = False
+                elif "downloaded_files" in result:
+                    logger.info(f"✅ Separation completed! Downloaded {len(downloaded_files)} files:")
+                    for file_path in downloaded_files:
                         logger.info(f"  - {file_path}")
                 else:
                     logger.info(f"✅ Separation completed! Files available for download: {result['files']}")
             else:
                 logger.error(f"❌ Separation failed: {result.get('error', 'Unknown error')}")
+                all_succeeded = False
 
         except Exception as e:
             logger.error(f"❌ Error processing '{audio_file}': {e}")
+            all_succeeded = False
         finally:
             if uploaded_gcs_uri:
                 delete_from_gcs(uploaded_gcs_uri, logger)
+
+    return all_succeeded
 
 
 def handle_status_command(args, api_client: AudioSeparatorAPIClient, logger: logging.Logger):
