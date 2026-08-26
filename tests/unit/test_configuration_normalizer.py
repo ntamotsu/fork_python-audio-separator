@@ -407,37 +407,6 @@ class TestConfigurationNormalizer:
         with pytest.raises(ParameterValidationError, match='model_type, num_bands'):
             self.normalizer.detect_model_type(config)
 
-    def test_generic_roformer_hint_defers_to_family_token_in_filename(self):
-        """A generic Roformer label must not override a specific MelBand basename."""
-        config = {
-            'architecture': 'roformer',
-            'dim': 384,
-            'depth': 12,
-        }
-
-        result = self.normalizer.normalize_from_file_path(
-            config,
-            '/tmp/mel_band_roformer_karaoke.ckpt',
-            apply_defaults=True,
-            validate=False,
-        )
-
-        assert result['num_bands'] == 64
-        assert 'freqs_per_bands' not in result
-
-    def test_detect_model_type_rejects_conflicting_hints_across_nested_sections(self):
-        """Flattening must not hide contradictory explicit model type fields."""
-        config = {
-            'model_type': 'bs_roformer',
-            'model': {
-                'model_type': 'mel_band_roformer',
-                'num_bands': 60,
-            },
-        }
-
-        with pytest.raises(ParameterValidationError, match='model_type, model.model_type'):
-            self.normalizer.detect_model_type(config)
-    
     def test_normalize_from_file_path_default_fallback(self):
         """Test normalization with file path detection - default fallback."""
         config = {

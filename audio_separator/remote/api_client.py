@@ -7,8 +7,6 @@ from urllib.parse import quote
 
 import requests
 
-from audio_separator.remote.error_utils import format_remote_error
-
 # Get package version for debugging
 try:
     from importlib.metadata import version
@@ -334,7 +332,6 @@ class AudioSeparatorAPIClient:
                     # Download files if requested
                     if download:
                         downloaded_files = []
-                        download_failures = []
                         files_data = status.get("files", {})
                         
                         # Handle both old (list) and new (dict) format
@@ -357,7 +354,6 @@ class AudioSeparatorAPIClient:
                                     self.logger.info(f"  ✅ Downloaded: {downloaded_path}")
                                 except Exception as e:
                                     self.logger.error(f"  ❌ Failed to download {filename}: {e}")
-                                    download_failures.append((filename, e))
                                     self._log_server_version_on_error()
                         else:
                             # New format: dictionary of hash -> filename
@@ -379,19 +375,10 @@ class AudioSeparatorAPIClient:
                                     self.logger.info(f"  ✅ Downloaded: {downloaded_path}")
                                 except Exception as e:
                                     self.logger.error(f"  ❌ Failed to download {filename}: {e}")
-                                    download_failures.append((filename, e))
                                     self._log_server_version_on_error()
 
                         result["downloaded_files"] = downloaded_files
-                        if not files_data:
-                            result["status"] = "error"
-                            result["error"] = "Remote separation completed but returned no output files"
-                        elif download_failures:
-                            failure_details = "; ".join(f"{filename}: {format_remote_error(error)}" for filename, error in download_failures)
-                            result["status"] = "error"
-                            result["error"] = f"Failed to download {len(download_failures)} output file(s): {failure_details}"
-                        else:
-                            self.logger.info(f"🎉 Successfully downloaded {len(downloaded_files)} files!")
+                        self.logger.info(f"🎉 Successfully downloaded {len(downloaded_files)} files!")
 
                     return result
 

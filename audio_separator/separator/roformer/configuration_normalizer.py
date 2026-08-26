@@ -266,48 +266,23 @@ class ConfigurationNormalizer:
             structural_type = "mel_band_roformer"
             structural_marker = "num_bands"
 
-        explicit_evidence = self._collect_explicit_model_type_evidence(config)
+        explicit_key = None
+        explicit_type = None
+        for key in ('model_type', 'type', 'architecture'):
+            explicit_type = self._detect_explicit_model_type(normalized.get(key))
+            if explicit_type is not None:
+                explicit_key = key
+                break
 
-        explicit_types = {model_type for _, model_type in explicit_evidence}
-        if len(explicit_types) > 1:
-            raise ParameterValidationError.incompatible_parameters(
-                parameter_names=[key for key, _ in explicit_evidence],
-                issue_description='Explicit model type fields describe different Roformer families',
-                suggested_fix='Use one consistent Roformer family in all explicit model type fields',
-                context='Roformer model type detection',
-            )
-
-        explicit_type = next(iter(explicit_types), None)
         if structural_type is not None and explicit_type is not None and structural_type != explicit_type:
             raise ParameterValidationError.incompatible_parameters(
-                parameter_names=[explicit_evidence[0][0], structural_marker],
+                parameter_names=[explicit_key, structural_marker],
                 issue_description='Explicit model type conflicts with the architecture-defining parameter',
                 suggested_fix='Make the explicit model type agree with the structural Roformer parameters',
                 context='Roformer model type detection',
             )
 
         return structural_type or explicit_type
-
-    def _collect_explicit_model_type_evidence(self, config: Dict[str, Any]) -> List[tuple]:
-        """Collect type hints before flattening can overwrite contradictory values."""
-        evidence = []
-        explicit_keys = ('model_type', 'type', 'architecture')
-
-        for key in explicit_keys:
-            explicit_type = self._detect_explicit_model_type(config.get(key))
-            if explicit_type is not None:
-                evidence.append((key, explicit_type))
-
-        for section_name in ('model', 'architecture', 'params'):
-            section = config.get(section_name)
-            if not isinstance(section, dict):
-                continue
-            for key in explicit_keys:
-                explicit_type = self._detect_explicit_model_type(section.get(key))
-                if explicit_type is not None:
-                    evidence.append((f'{section_name}.{key}', explicit_type))
-
-        return evidence
 
     @staticmethod
     def _detect_explicit_model_type(value: Any) -> Optional[str]:
@@ -340,13 +315,9 @@ class ConfigurationNormalizer:
             'mel_roformer',
         )
 
-        has_bs_token = any(token in filename for token in bs_tokens)
-        has_mel_token = any(token in filename for token in mel_tokens)
-        if has_bs_token and has_mel_token:
-            raise ValueError(f"Checkpoint basename contains both BS and MelBand Roformer tokens: {filename}")
-        if has_bs_token:
+        if any(token in filename for token in bs_tokens):
             return "bs_roformer"
-        if has_mel_token:
+        if any(token in filename for token in mel_tokens):
             return "mel_band_roformer"
         if 'roformer' in filename:
             logger.warning(f"Generic 'roformer' detected in {filename}, defaulting to bs_roformer")
@@ -360,7 +331,9 @@ class ConfigurationNormalizer:
             model_type = self.detect_model_type_from_filename(file_path)
         if model_type is None:
             model_type = "bs_roformer"
-            logger.warning(f"Could not detect model type from config or path {file_path}, defaulting to bs_roformer")
+            logger.warning(
+                f"Could not detect model type from config or checkpoint basename {file_path}, defaulting to bs_roformer"
+            )
         return model_type
     
     def normalize_from_file_path(self, 
@@ -369,11 +342,12 @@ class ConfigurationNormalizer:
                                 apply_defaults: bool = True,
                                 validate: bool = True) -> Dict[str, Any]:
         """
-        Normalize configuration with model type detection from file path.
+        Normalize configuration after resolving the model type from config evidence.
         
         Args:
             config: Configuration dictionary
-            file_path: Path to the model file (used for type detection)
+            file_path: Path to the model file. Only its basename is used as a fallback
+                when the config does not identify a Roformer family.
             apply_defaults: Whether to apply defaults
             validate: Whether to validate
             

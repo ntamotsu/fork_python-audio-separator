@@ -2,11 +2,8 @@
 
 import threading
 import time
-from unittest.mock import Mock, patch
 
 import pytest
-
-from audio_separator.separator.exceptions import AudioExportError, BatchSeparationError
 
 
 class TestGPUSemaphore:
@@ -120,24 +117,6 @@ class TestLazyInit:
 
         # Clean up
         module._output_store = None
-
-
-class TestRemoteErrorContract:
-    def test_separation_error_response_keeps_original_writer_message(self, tmp_path):
-        import audio_separator.remote.deploy_cloudrun as module
-
-        writer_error = AudioExportError("ffmpeg encoder exploded", path="input_(Vocals).m4a", backend="pydub")
-        batch_error = BatchSeparationError([], [("input.wav", writer_error)])
-        job_store = Mock()
-
-        with patch.object(module, "STORAGE_DIR", str(tmp_path)), patch.object(module, "get_job_store", return_value=job_store), patch(
-            "audio_separator.separator.Separator"
-        ) as separator_class:
-            separator_class.return_value.separate.side_effect = batch_error
-            result = module.separate_audio_sync(b"audio", "input.wav", "task-1", models=["model.ckpt"])
-
-        assert result["status"] == "error"
-        assert "input.wav: ffmpeg encoder exploded" in result["error"]
 
 
 class TestFireAndForget:

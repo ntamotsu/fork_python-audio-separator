@@ -355,21 +355,6 @@ class TestAudioSeparatorAPIClient:
 
     @patch.object(AudioSeparatorAPIClient, "separate_audio")
     @patch.object(AudioSeparatorAPIClient, "get_job_status")
-    @patch.object(AudioSeparatorAPIClient, "download_file")
-    def test_separate_audio_and_wait_reports_partial_download_as_error(self, mock_download, mock_status, mock_separate, api_client, mock_audio_file):
-        mock_separate.return_value = {"task_id": "test-task-partial"}
-        mock_status.return_value = {"status": "completed", "files": ["first.wav", "second.wav"]}
-        download_error = OSError("download interrupted")
-        mock_download.side_effect = ["first.wav", download_error]
-
-        result = api_client.separate_audio_and_wait(mock_audio_file, download=True)
-
-        assert result["status"] == "error"
-        assert result["downloaded_files"] == ["first.wav"]
-        assert "second.wav: download interrupted" in result["error"]
-
-    @patch.object(AudioSeparatorAPIClient, "separate_audio")
-    @patch.object(AudioSeparatorAPIClient, "get_job_status")
     @patch("time.sleep")
     def test_separate_audio_and_wait_error(self, mock_sleep, mock_status, mock_separate, api_client, mock_audio_file):
         """Test the convenience method when job fails."""

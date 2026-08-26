@@ -1,16 +1,8 @@
 """Public exceptions raised by audio validation and separation output handling."""
 
 
-def _restore_audio_export_error(message, path, backend):
-    return AudioExportError(message, path=path, backend=backend)
-
-
-def _restore_batch_separation_error(successful_files, failures):
-    return BatchSeparationError(successful_files, failures)
-
-
 class InvalidAudioDataError(ValueError):
-    """Raised when a separator produces audio that cannot be exported safely."""
+    """Raised when decoded or generated audio data cannot be processed safely."""
 
 
 class AudioExportError(RuntimeError):
@@ -20,9 +12,6 @@ class AudioExportError(RuntimeError):
         super().__init__(message)
         self.path = path
         self.backend = backend
-
-    def __reduce__(self):
-        return _restore_audio_export_error, (str(self), self.path, self.backend)
 
 
 class BatchSeparationError(RuntimeError):
@@ -38,6 +27,3 @@ class BatchSeparationError(RuntimeError):
         self.failures = list(failures.items()) if isinstance(failures, dict) else list(failures)
         failure_details = "; ".join(f"{path}: {error}" for path, error in self.failures)
         super().__init__(f"Separation failed for {len(self.failures)} input(s): {failure_details}")
-
-    def __reduce__(self):
-        return _restore_batch_separation_error, (self.successful_files, self.failures)

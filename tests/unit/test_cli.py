@@ -7,7 +7,7 @@ import importlib.metadata
 from unittest import mock
 from unittest.mock import patch, MagicMock, mock_open
 
-from audio_separator.separator.exceptions import AudioExportError, BatchSeparationError
+from audio_separator.separator.exceptions import AudioExportError
 
 
 # Mock metadata.distribution for tests to avoid PackageNotFoundError in environment without installed package
@@ -106,20 +106,6 @@ def test_cli_exits_one_when_audio_export_fails():
 
     with patch("sys.argv", test_args), patch("audio_separator.separator.Separator") as separator_class:
         separator_class.return_value.separate.side_effect = export_error
-
-        with pytest.raises(SystemExit) as raised:
-            main()
-
-    assert raised.value.code == 1
-
-
-def test_cli_exits_one_when_batch_has_partial_failures():
-    test_args = ["cli.py", "good.wav", "bad.wav"]
-    writer_error = AudioExportError("writer failed", path="bad_(Vocals).flac", backend="pydub")
-    batch_error = BatchSeparationError(["good_(Vocals).flac"], [("bad.wav", writer_error)])
-
-    with patch("sys.argv", test_args), patch("audio_separator.separator.Separator") as separator_class:
-        separator_class.return_value.separate.side_effect = batch_error
 
         with pytest.raises(SystemExit) as raised:
             main()

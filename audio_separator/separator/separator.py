@@ -26,7 +26,7 @@ from tqdm import tqdm
 from audio_separator.separator.audio_io import atomic_output_path, validate_audio_source
 from audio_separator.separator.ensembler import Ensembler
 from audio_separator.separator.execution_policy import AUTOCAST, FP32, NATIVE_FP16
-from audio_separator.separator.exceptions import BatchSeparationError, InvalidAudioDataError
+from audio_separator.separator.exceptions import AudioExportError, BatchSeparationError, InvalidAudioDataError
 
 # Mapping of common stem name variations to canonical names for ensemble grouping.
 STEM_NAME_MAP = {
@@ -54,12 +54,8 @@ STEM_NAME_MAP = {
 SUPPORTED_AUDIO_EXTENSIONS = (".wav", ".flac", ".mp3", ".ogg", ".opus", ".m4a", ".aiff", ".ac3")
 
 
-def _iter_directory_audio_files(directory, failures):
-    def record_scan_failure(error):
-        failed_path = getattr(error, "filename", None) or directory
-        failures.append((failed_path, error))
-
-    for root, _dirs, files in os.walk(directory, onerror=record_scan_failure):
+def _iter_directory_audio_files(directory):
+    for root, _dirs, files in os.walk(directory):
         for filename in files:
             if filename.endswith(SUPPORTED_AUDIO_EXTENSIONS):
                 yield os.path.join(root, filename)
@@ -1038,10 +1034,11 @@ class Separator:
         - custom_output_names (dict, optional): Custom names for the output files. Defaults to None.
 
         Returns:
-        - output_files (list of str): Paths produced by inputs that completed their full stem set.
+        - output_files (list of str): Fully written output paths produced by inputs that completed
+          their full stem set. Valid silent and near-silent stems are included.
 
         Raises:
-        - InvalidAudioDataError: A model produced empty, non-finite, or structurally invalid audio.
+        - InvalidAudioDataError: Decoded or generated audio data was empty, non-finite, or structurally invalid.
         - AudioExportError: An audio backend or filesystem failed to publish an output file.
         - BatchSeparationError: A list or directory input had one or more failures. All discoverable
           inputs are attempted first; inspect ``successful_files`` and the ordered ``failures`` list.
@@ -1062,7 +1059,7 @@ class Separator:
             input_paths = [audio_file_path] if isinstance(audio_file_path, str) else audio_file_path
             for path in input_paths:
                 if os.path.isdir(path):
-                    ensemble_inputs.extend(_iter_directory_audio_files(path, failures))
+                    ensemble_inputs.extend(_iter_directory_audio_files(path))
                 else:
                     ensemble_inputs.append(path)
 
@@ -1094,7 +1091,7 @@ class Separator:
         for path in audio_file_path:
             if os.path.isdir(path):
                 # If the path is a directory, recursively search for all audio files
-                for full_path in _iter_directory_audio_files(path, failures):
+                for full_path in _iter_directory_audio_files(path):
                     self.logger.info(f"Processing file: {full_path}")
                     try:
                         # Perform separation for each file
@@ -1567,9 +1564,17 @@ class Separator:
                             max_peak=self.normalization_threshold,
                             min_peak=self.amplification_threshold,
                         )
-                        with atomic_output_path(final_output_path, "soundfile") as temp_output_path:
-                            self.logger.debug(f"Attempting to write ensembled audio to {final_output_path}...")
-                            sf.write(temp_output_path, ensemble_audio, self.sample_rate)
+                        try:
+                            with atomic_output_path(final_output_path, "soundfile") as temp_output_path:
+                                self.logger.debug(f"Attempting to write ensembled audio to {final_output_path}...")
+                                sf.write(temp_output_path, ensemble_audio, self.sample_rate)
+                        except AudioExportError as requested_format_error:
+                            self.logger.error(
+                                f"Error writing {self.output_format} format: {requested_format_error}. Falling back to WAV."
+                            )
+                            final_output_path = final_output_path.rsplit(".", 1)[0] + ".wav"
+                            with atomic_output_path(final_output_path, "soundfile") as temp_output_path:
+                                sf.write(temp_output_path, ensemble_audio, self.sample_rate)
 
                         output_files.append(final_output_path)
 

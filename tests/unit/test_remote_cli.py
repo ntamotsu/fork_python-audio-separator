@@ -113,16 +113,6 @@ class TestRemoteCLI:
         call_args = mock_client_class.call_args
         assert call_args[0][0] == 'https://test-api.com'  # First argument should be the API URL
 
-    @patch('sys.argv', ['audio-separator-remote', 'separate', 'test.wav'])
-    @patch('audio_separator.remote.cli.AudioSeparatorAPIClient')
-    @patch('audio_separator.remote.cli.handle_separate_command', return_value=False)
-    @patch.dict(os.environ, {'AUDIO_SEPARATOR_API_URL': 'https://test-api.com'})
-    def test_separate_command_exits_one_when_any_remote_job_fails(self, mock_handle_separate, mock_client_class):
-        with pytest.raises(SystemExit) as raised:
-            main()
-
-        assert raised.value.code == 1
-
     @patch('sys.argv', ['audio-separator-remote', 'status', 'task-123'])
     @patch('audio_separator.remote.cli.AudioSeparatorAPIClient')
     @patch('audio_separator.remote.cli.handle_status_command')
@@ -432,19 +422,6 @@ class TestRemoteCLI:
         kwargs = mock_api_client.separate_audio_and_wait.call_args[1]
         assert kwargs["file_path"] == mock_audio_file
         assert kwargs["gcs_uri"] is None
-
-    def test_handle_separate_treats_missing_downloads_as_failure(self, mock_api_client, mock_logger, mock_audio_file):
-        args = self._make_separate_args(mock_audio_file)
-        mock_api_client.separate_audio_and_wait.return_value = {
-            "status": "completed",
-            "files": ["output.wav"],
-            "downloaded_files": [],
-        }
-
-        succeeded = handle_separate_command(args, mock_api_client, mock_logger, "test-bucket")
-
-        assert succeeded is False
-        mock_logger.error.assert_called()
 
     def test_handle_status_command_success(self, mock_api_client, mock_logger):
         """Test successful status command handling."""

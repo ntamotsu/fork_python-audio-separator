@@ -214,7 +214,10 @@ class DemucsSeparator(CommonSeparator):
         ref = mix.mean(0)
         ref_mean = ref.mean()
         ref_std = ref.std()
-        mix.sub_(ref_mean).div_(ref_std)
+        if not torch.isfinite(ref_std):
+            ref_std = torch.zeros_like(ref_std)
+        normalization_std = ref_std.clamp_min(torch.finfo(mix.dtype).eps)
+        mix.sub_(ref_mean).div_(normalization_std)
         mix_infer = mix
 
         with torch.no_grad():

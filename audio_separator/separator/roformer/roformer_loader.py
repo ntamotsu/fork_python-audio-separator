@@ -228,16 +228,8 @@ class RoformerLoader:
         """
         import torch
 
-        # Preserve the legacy constructor input while supporting every nested
-        # configuration section recognized by the normalizer.
-        model_cfg = {}
-        found_nested_model_section = False
-        for section_name, section in original_config.items():
-            if section_name in ('model', 'architecture', 'params') and isinstance(section, dict):
-                model_cfg.update(section)
-                found_nested_model_section = True
-        if not found_nested_model_section:
-            model_cfg = original_config
+        # Preserve the legacy constructor's original flat/model-section input.
+        model_cfg = original_config.get('model', original_config)
         model_cfg = self.config_normalizer.normalize_config(
             model_cfg,
             model_type,

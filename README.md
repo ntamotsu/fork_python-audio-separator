@@ -41,6 +41,7 @@ The simplest (and probably most used) use case for this package is to separate a
     - [Full command-line interface options](#full-command-line-interface-options)
     - [As a Dependency in a Python Project](#as-a-dependency-in-a-python-project)
       - [Batch processing and processing with multiple models](#batch-processing-and-processing-with-multiple-models)
+      - [Output and error handling](#output-and-error-handling)
       - [Renaming Stems](#renaming-stems)
   - [Parameters for the Separator class](#parameters-for-the-separator-class)
   - [Remote API Usage 🌐](#remote-api-usage-)
@@ -645,26 +646,6 @@ separator.load_model(model_filename='UVR_MDXNET_KARA_2.onnx')
 output_files = separator.separate(['audio1.wav', 'audio2.wav', 'audio3.wav'])
 ```
 
-Single-file calls fail immediately if model output is invalid or an output file cannot be written. List and directory calls attempt every discoverable file, then raise `BatchSeparationError` if any input failed. The exception keeps files from fully successful inputs in `successful_files` and ordered `(input_path, exception)` pairs in `failures`:
-
-```python
-from audio_separator.separator import (
-    AudioExportError,
-    BatchSeparationError,
-    InvalidAudioDataError,
-)
-
-try:
-    output_files = separator.separate(['audio1.wav', 'audio2.wav'])
-except BatchSeparationError as error:
-    print(f"Completed files: {error.successful_files}")
-    for input_path, cause in error.failures:
-        print(f"{input_path}: {cause}")
-except (InvalidAudioDataError, AudioExportError) as error:
-    # These are raised directly for a single input file.
-    print(f"Separation failed: {error}")
-```
-
 You can also specify the path to a folder containing audio files instead of listing the full paths to each of them:
 ```python
 from audio_separator.separator import Separator
@@ -678,6 +659,25 @@ separator.load_model(model_filename='model_bs_roformer_ep_317_sdr_12.9755.ckpt')
 # Separate all audio files located in a folder
 output_files = separator.separate('path/to/audio_directory')
 ```
+
+#### Output and error handling
+
+On success, every path returned by `separate()` refers to a fully written output file. Valid stems are written even when silent or near-silent; applications that want to suppress them should apply their own loudness policy.
+
+A string file path is processed as a single input and propagates failures immediately. A list or directory is treated as a batch: all discoverable inputs are attempted, then `BatchSeparationError` is raised if any failed.
+
+```python
+from audio_separator.separator import BatchSeparationError
+
+try:
+    output_files = separator.separate(['audio1.wav', 'audio2.wav'])
+except BatchSeparationError as error:
+    print(f"Completed files: {error.successful_files}")
+    for input_path, cause in error.failures:
+        print(f"{input_path}: {cause}")
+```
+
+`InvalidAudioDataError` and `AudioExportError` are available for callers that need to distinguish validation failures from output-publication failures.
 
 #### Renaming Stems
 

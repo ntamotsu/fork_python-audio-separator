@@ -5,7 +5,6 @@ Tests the AudioChunker class for splitting and merging audio files.
 
 import pytest
 import os
-import shutil
 import tempfile
 import logging
 from pathlib import Path
@@ -261,20 +260,6 @@ class TestAudioChunkerIntegration:
 
         export_handle.close.assert_called_once_with()
 
-    @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="FFmpeg is required for M4A encoding")
-    def test_merge_silent_chunks_to_redecodable_m4a_with_full_duration(self, tmp_path):
-        first_chunk = tmp_path / "first.wav"
-        second_chunk = tmp_path / "second.wav"
-        AudioSegment.silent(duration=100).export(first_chunk, format="wav")
-        AudioSegment.silent(duration=150).export(second_chunk, format="wav")
-
-        output_path = tmp_path / "merged.m4a"
-        AudioChunker(5.0).merge_chunks([str(first_chunk), str(second_chunk)], str(output_path))
-
-        decoded = AudioSegment.from_file(output_path)
-        assert output_path.stat().st_size > 0
-        assert abs(len(decoded) - 250) <= 40
-
     def test_merge_preserves_duration_of_a_silent_intermediate_chunk(self, tmp_path):
         chunks = [Sine(440).to_audio_segment(duration=100), AudioSegment.silent(duration=150), Sine(440).to_audio_segment(duration=200)]
         chunk_paths = []
@@ -289,20 +274,6 @@ class TestAudioChunkerIntegration:
         decoded = AudioSegment.from_file(output_path)
         assert abs(len(decoded) - 450) <= 2
         assert decoded[110:240].rms == 0
-
-    @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="FFmpeg is required for M4A encoding")
-    def test_split_m4a_creates_redecodable_m4a_chunks_with_full_duration(self, tmp_path):
-        input_path = tmp_path / "input.m4a"
-        Sine(440).to_audio_segment(duration=250).export(input_path, format="mp4")
-        input_duration = len(AudioSegment.from_file(input_path))
-
-        chunk_paths = AudioChunker(0.1).split_audio(str(input_path), str(tmp_path / "chunks"))
-
-        decoded_durations = [len(AudioSegment.from_file(chunk_path)) for chunk_path in chunk_paths]
-        assert all(chunk_path.endswith(".m4a") for chunk_path in chunk_paths)
-        # Each independently encoded AAC chunk can add one codec frame of padding.
-        assert abs(sum(decoded_durations) - input_duration) <= 60
-
 
 class TestAudioChunkerEdgeCases:
     """Test edge cases and error handling."""

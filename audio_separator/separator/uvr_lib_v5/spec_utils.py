@@ -110,24 +110,15 @@ def normalize(wave, max_peak=1.0, min_peak=None):
     wave = np.asarray(wave)
     if wave.size == 0:
         raise InvalidAudioDataError("Audio data is empty")
-    if np.issubdtype(wave.dtype, np.integer):
-        wave = wave.astype(np.float32)
-    elif not np.issubdtype(wave.dtype, np.floating):
-        raise InvalidAudioDataError(f"Audio data must use a real numeric dtype, got {wave.dtype}")
 
     maxv = np.abs(wave).max()
     if not np.isfinite(maxv):
         raise InvalidAudioDataError("Audio data must contain only finite values")
 
     if maxv > max_peak:
-        if not wave.flags.writeable:
-            wave = wave.copy()
         wave *= max_peak / maxv
     elif min_peak is not None and 0 < maxv < min_peak:
-        if not wave.flags.writeable:
-            wave = wave.copy()
-        wave /= maxv
-        wave *= min_peak
+        wave *= min_peak / maxv
 
     return wave
 
