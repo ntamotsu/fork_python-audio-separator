@@ -266,13 +266,21 @@ class ConfigurationNormalizer:
             structural_type = "mel_band_roformer"
             structural_marker = "num_bands"
 
-        explicit_key = None
-        explicit_type = None
+        explicit_types = {}
         for key in ('model_type', 'type', 'architecture'):
-            explicit_type = self._detect_explicit_model_type(normalized.get(key))
-            if explicit_type is not None:
-                explicit_key = key
-                break
+            detected_type = self._detect_explicit_model_type(normalized.get(key))
+            if detected_type is not None:
+                explicit_types[key] = detected_type
+
+        if len(set(explicit_types.values())) > 1:
+            raise ParameterValidationError.incompatible_parameters(
+                parameter_names=list(explicit_types),
+                issue_description='Configuration contains conflicting explicit Roformer model types',
+                suggested_fix='Make all explicit Roformer model type fields agree',
+                context='Roformer model type detection',
+            )
+
+        explicit_key, explicit_type = next(iter(explicit_types.items()), (None, None))
 
         if structural_type is not None and explicit_type is not None and structural_type != explicit_type:
             raise ParameterValidationError.incompatible_parameters(
@@ -313,6 +321,7 @@ class ConfigurationNormalizer:
             'melband-roformer',
             'melbandroformer',
             'mel_roformer',
+            'mel-roformer',
         )
 
         if any(token in filename for token in bs_tokens):

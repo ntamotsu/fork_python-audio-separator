@@ -312,6 +312,7 @@ class TestConfigurationNormalizer:
         file_paths = [
             '/path/to/mel_band_roformer_model.ckpt',
             '/path/to/MelBand-Roformer-model.pth',
+            '/path/to/mel-roformer-vocals.ckpt',
             '/path/to/model_mel_roformer.bin'
         ]
         
@@ -405,6 +406,16 @@ class TestConfigurationNormalizer:
         }
 
         with pytest.raises(ParameterValidationError, match='model_type, num_bands'):
+            self.normalizer.detect_model_type(config)
+
+    def test_detect_model_type_rejects_conflicting_explicit_types(self):
+        """All recognized explicit family fields must agree."""
+        config = {
+            'model_type': 'bs_roformer',
+            'type': 'mel_band_roformer',
+        }
+
+        with pytest.raises(ParameterValidationError, match='model_type, type'):
             self.normalizer.detect_model_type(config)
 
     def test_normalize_from_file_path_default_fallback(self):
