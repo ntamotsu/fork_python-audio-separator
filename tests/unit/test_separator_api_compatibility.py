@@ -36,3 +36,15 @@ def test_execution_options_are_appended_to_constructor_signature():
     ]
     assert inspect.signature(Separator.__init__).parameters["use_torch_compile"].default is False
     assert inspect.signature(Separator.__init__).parameters["use_native_fp16"].default is False
+
+
+def test_mdxc_step_size_seconds_default_is_disabled():
+    mdxc_params = inspect.signature(Separator.__init__).parameters["mdxc_params"].default
+
+    assert mdxc_params["step_size_seconds"] is None
+
+
+def test_mdxc_step_size_seconds_is_preserved_in_separator_config():
+    separator = Separator(mdxc_params={"step_size_seconds": 1.5}, info_only=True)
+
+    assert separator.arch_specific_params["MDXC"]["step_size_seconds"] == 1.5

@@ -148,6 +148,11 @@ def main():
     mdxc_segment_size_help = "Larger consumes more resources, but may give better results (default: %(default)s). Example: --mdxc_segment_size=256"
     mdxc_override_model_segment_size_help = "Override model default segment size instead of using the model default value. Example: --mdxc_override_model_segment_size"
     mdxc_overlap_help = "Number of overlapping prediction windows, 2-50. Higher is better but slower (default: model config, falling back to 8). Example: --mdxc_overlap=8"
+    mdxc_step_size_seconds_help = (
+        "Distance in seconds between RoFormer prediction-window starts. Smaller values increase overlap and processing time. "
+        "Overrides --mdxc_overlap; values longer than a model chunk are clamped (default: disabled). "
+        "Example: --mdxc_step_size_seconds=8"
+    )
     mdxc_batch_size_help = "Larger consumes more RAM but may process slightly faster (default: model config, falling back to 1). Example: --mdxc_batch_size=4"
     mdxc_pitch_shift_help = "Shift audio pitch by a number of semitones while processing. May improve output for deep/high vocals. (default: %(default)s). Example: --mdxc_pitch_shift=2"
 
@@ -155,6 +160,7 @@ def main():
     mdxc_params.add_argument("--mdxc_segment_size", type=int, default=256, help=mdxc_segment_size_help)
     mdxc_params.add_argument("--mdxc_override_model_segment_size", action="store_true", help=mdxc_override_model_segment_size_help)
     mdxc_params.add_argument("--mdxc_overlap", type=int, default=None, help=mdxc_overlap_help)
+    mdxc_params.add_argument("--mdxc_step_size_seconds", type=float, default=None, help=mdxc_step_size_seconds_help)
     mdxc_params.add_argument("--mdxc_batch_size", type=int, default=None, help=mdxc_batch_size_help)
     mdxc_params.add_argument("--mdxc_pitch_shift", type=int, default=0, help=mdxc_pitch_shift_help)
 
@@ -300,6 +306,7 @@ def main():
             "segment_size": args.mdxc_segment_size,
             "batch_size": args.mdxc_batch_size,
             "overlap": args.mdxc_overlap,
+            "step_size_seconds": args.mdxc_step_size_seconds,
             "override_model_segment_size": args.mdxc_override_model_segment_size,
             "pitch_shift": args.mdxc_pitch_shift,
         },
