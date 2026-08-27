@@ -526,7 +526,7 @@ usage: audio-separator [-h] [-v] [-d] [-e] [-l] [--log_level LOG_LEVEL] [--list_
                        [--vr_window_size VR_WINDOW_SIZE] [--vr_aggression VR_AGGRESSION] [--vr_enable_tta] [--vr_high_end_process] [--vr_enable_post_process]
                        [--vr_post_process_threshold VR_POST_PROCESS_THRESHOLD] [--demucs_segment_size DEMUCS_SEGMENT_SIZE] [--demucs_shifts DEMUCS_SHIFTS] [--demucs_overlap DEMUCS_OVERLAP]
                        [--demucs_segments_enabled DEMUCS_SEGMENTS_ENABLED] [--mdxc_segment_size MDXC_SEGMENT_SIZE] [--mdxc_override_model_segment_size] [--mdxc_overlap MDXC_OVERLAP]
-                       [--mdxc_batch_size MDXC_BATCH_SIZE] [--mdxc_pitch_shift MDXC_PITCH_SHIFT]
+                       [--mdxc_step_size_seconds MDXC_STEP_SIZE_SECONDS] [--mdxc_batch_size MDXC_BATCH_SIZE] [--mdxc_pitch_shift MDXC_PITCH_SHIFT]
                        [audio_files ...]
 
 Separate audio file into different stems.
@@ -594,9 +594,12 @@ MDXC Architecture Parameters:
   --mdxc_segment_size MDXC_SEGMENT_SIZE                  Larger consumes more resources, but may give better results (default: 256). Example: --mdxc_segment_size=256
   --mdxc_override_model_segment_size                     Override model default segment size instead of using the model default value. Example: --mdxc_override_model_segment_size
   --mdxc_overlap MDXC_OVERLAP                            Number of overlapping prediction windows, 2-50. Higher is better but slower (default: model config, falling back to 8). Example: --mdxc_overlap=8
+  --mdxc_step_size_seconds MDXC_STEP_SIZE_SECONDS        Distance in seconds between RoFormer prediction-window starts. Smaller values increase overlap and processing time. Overrides --mdxc_overlap; values longer than a model chunk are clamped (default: disabled). Example: --mdxc_step_size_seconds=8
   --mdxc_batch_size MDXC_BATCH_SIZE                      Larger consumes more RAM but may process slightly faster (default: model config, falling back to 1). Example: --mdxc_batch_size=4
   --mdxc_pitch_shift MDXC_PITCH_SHIFT                    Shift audio pitch by a number of semitones while processing. May improve output for deep/high vocals. (default: 0). Example: --mdxc_pitch_shift=2
 ```
+
+For RoFormer models, `--mdxc_step_size_seconds` restores the seconds-based behavior that `--mdxc_overlap` used before v0.47.0. For example, replace the old `--mdxc_overlap=8` with `--mdxc_step_size_seconds=8` to keep the same chunk-start interval.
 
 ### As a Dependency in a Python Project
 
@@ -751,7 +754,7 @@ You can also rename specific stems:
 - **`mdx_params`:** (Optional) MDX Architecture Specific Attributes & Defaults. `Default: {"hop_length": 1024, "segment_size": 256, "overlap": 0.25, "batch_size": 1, "enable_denoise": False}`
 - **`vr_params`:** (Optional) VR Architecture Specific Attributes & Defaults. `Default: {"batch_size": 1, "window_size": 512, "aggression": 5, "enable_tta": False, "enable_post_process": False, "post_process_threshold": 0.2, "high_end_process": False}`
 - **`demucs_params`:** (Optional) Demucs Architecture Specific Attributes & Defaults. `Default: {"segment_size": "Default", "shifts": 2, "overlap": 0.25, "segments_enabled": True}` _(Note: `segment_size` "Default" uses the model's internal default, typically 40 for older Demucs models and 10 for Demucs v4/htdemucs)_
-- **`mdxc_params`:** (Optional) MDXC Architecture Specific Attributes & Defaults. `Default: {"segment_size": 256, "override_model_segment_size": False, "batch_size": None, "overlap": None, "pitch_shift": 0}` (`None` uses the model YAML's `inference` value, falling back to `1` for batch size and `8` for overlap.)
+- **`mdxc_params`:** (Optional) MDXC Architecture Specific Attributes & Defaults. `Default: {"segment_size": 256, "override_model_segment_size": False, "batch_size": None, "overlap": None, "step_size_seconds": None, "pitch_shift": 0}` (`batch_size=None` and `overlap=None` use the model YAML's `inference` values, falling back to `1` and `8`. `step_size_seconds=None` disables the compatibility override; set it for RoFormer models to use the pre-v0.47.0 seconds-based chunk-start interval.)
 - **`ensemble_algorithm`:** (Optional) Algorithm to use for ensembling multiple models. `Default: 'avg_wave'`
 - **`ensemble_weights`:** (Optional) Weights for each model in the ensemble. `Default: None` (equal weights)
 - **`ensemble_preset`:** (Optional) Named ensemble preset (e.g. `'vocal_balanced'`, `'karaoke'`). Sets models, algorithm, and weights automatically. Use `Separator(info_only=True).list_ensemble_presets()` to see all. `Default: None`

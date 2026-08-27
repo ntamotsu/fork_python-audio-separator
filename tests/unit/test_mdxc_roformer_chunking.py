@@ -6,8 +6,54 @@ Tests the chunking mechanism, overlap handling, and edge cases.
 import pytest
 import numpy as np
 import torch
+from ml_collections import ConfigDict
 from unittest.mock import Mock, MagicMock, patch
 import logging
+
+from audio_separator.separator.architectures.mdxc_separator import MDXCSeparator
+
+
+class IdentityModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.anchor = torch.nn.Parameter(torch.zeros(1))
+
+    def forward(self, audio):
+        return audio.unsqueeze(1)
+
+
+def make_roformer_separator(overlap=2, step_size_seconds=None, sample_rate=2):
+    separator = MDXCSeparator.__new__(MDXCSeparator)
+    separator.pitch_shift = 0
+    separator.is_roformer = True
+    separator.override_model_segment_size = False
+    separator.model_data_cfgdict = ConfigDict(
+        {
+            "inference": {"dim_t": 5},
+            "training": {"target_instrument": "Vocals", "instruments": ["Vocals"]},
+            "model": {"stft_hop_length": 2},
+            "audio": {"hop_length": 2, "sample_rate": sample_rate},
+        }
+    )
+    separator.overlap = overlap
+    separator.step_size_seconds = step_size_seconds
+    separator.model_run = IdentityModel()
+    separator.is_primary_stem_main_target = False
+    separator.logger = Mock()
+    return separator
+
+
+def collect_chunk_starts(separator, audio_length=16):
+    chunk_starts = []
+
+    with patch(
+        "audio_separator.separator.architectures.mdxc_separator.tqdm",
+        side_effect=lambda values: chunk_starts.extend(values) or values,
+    ):
+        separator.demix(np.ones((2, audio_length), dtype=np.float32))
+
+    return chunk_starts
+
 
 class TestMDXCRoformerChunking:
     """Test cases for MDXC Roformer chunking and overlap functionality."""
@@ -39,41 +85,7 @@ class TestMDXCRoformerChunking:
 
     def test_step_uses_overlap_divisor(self):
         """T053: Step follows the MSST num_overlap divisor semantics."""
-        from ml_collections import ConfigDict
-
-        from audio_separator.separator.architectures.mdxc_separator import MDXCSeparator
-
-        class IdentityModel(torch.nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.anchor = torch.nn.Parameter(torch.zeros(1))
-
-            def forward(self, audio):
-                return audio.unsqueeze(1)
-
-        separator = MDXCSeparator.__new__(MDXCSeparator)
-        separator.pitch_shift = 0
-        separator.is_roformer = True
-        separator.override_model_segment_size = False
-        separator.model_data_cfgdict = ConfigDict(
-            {
-                "inference": {"dim_t": 5},
-                "training": {"target_instrument": "Vocals", "instruments": ["Vocals"]},
-                "model": {"stft_hop_length": 2},
-                "audio": {"hop_length": 2},
-            }
-        )
-        separator.overlap = 2
-        separator.model_run = IdentityModel()
-        separator.is_primary_stem_main_target = False
-        separator.logger = Mock()
-        chunk_starts = []
-
-        with patch(
-            "audio_separator.separator.architectures.mdxc_separator.tqdm",
-            side_effect=lambda values: chunk_starts.extend(values) or values,
-        ):
-            separator.demix(np.ones((2, 16), dtype=np.float32))
+        separator = make_roformer_separator()
 
         # chunk_size = stft_hop_length * (dim_t - 1) = 2 * 4 = 8, and with
         # overlap=2 the MSST divisor gives step = chunk_size // overlap = 4.
@@ -81,7 +93,48 @@ class TestMDXCRoformerChunking:
         # _roformer_chunk_starts stops there rather than emitting a redundant
         # offset-12 tail chunk (which would clamp back to start 8). The step-4
         # spacing of [0, 4, 8] is what confirms the overlap-divisor semantics.
-        assert chunk_starts == [0, 4, 8]
+        assert collect_chunk_starts(separator) == [0, 4, 8]
+
+    def test_step_size_seconds_uses_model_sample_rate(self):
+        """An explicit step size uses the pre-#299 seconds-based schedule."""
+        separator = make_roformer_separator(step_size_seconds=1.5)
+
+        assert collect_chunk_starts(separator) == [0, 3, 6, 8]
+
+    def test_step_size_seconds_truncates_fractional_sample_count(self):
+        """The pre-#299 calculation truncates rather than rounds sample counts."""
+        separator = make_roformer_separator(overlap=4, step_size_seconds=1.6, sample_rate=3)
+
+        assert collect_chunk_starts(separator) == [0, 4, 8]
+
+    def test_step_size_seconds_is_clamped_to_chunk_size(self):
+        """A seconds-based step cannot leave gaps between chunks."""
+        separator = make_roformer_separator(step_size_seconds=5)
+
+        assert collect_chunk_starts(separator) == [0, 8]
+
+    def test_finite_huge_step_size_seconds_is_clamped_without_overflow(self):
+        """Finite inputs larger than float multiplication can still clamp safely."""
+        separator = make_roformer_separator(step_size_seconds=1e308)
+
+        assert collect_chunk_starts(separator) == [0, 8]
+
+    def test_step_size_seconds_warns_when_clamped(self):
+        """Users are told when the requested step exceeds the model chunk."""
+        separator = make_roformer_separator(step_size_seconds=5)
+
+        collect_chunk_starts(separator)
+
+        separator.logger.warning.assert_called_once_with(
+            "MDXC step size (5 seconds) exceeds the model chunk size (4.000 seconds); clamping it to one chunk."
+        )
+
+    def test_step_size_seconds_must_resolve_to_at_least_one_sample(self):
+        """Sub-sample step sizes fail with an option-specific error."""
+        separator = make_roformer_separator(step_size_seconds=0.1)
+
+        with pytest.raises(ValueError, match="MDXC step size seconds must resolve to at least one sample"):
+            collect_chunk_starts(separator)
 
     def test_overlap_larger_than_chunk_size_is_rejected(self):
         """T053: Invalid overlap cannot produce a zero-sized RoFormer step."""
